@@ -1,11 +1,5 @@
+import { redirect } from "next/navigation";
 
-
-import TitlePage from "@/components/titlePage";
-
-export default function Home() {
-  return (
-    <div>
-      <TitlePage title="Dashboard" />
-    </div>
-  );
+export default function RootPage() {
+  redirect("/dashboard");
 }

@@ -1,116 +1,105 @@
-"use client"
+interface Column<T> {
+  key: keyof T | string;
+  label: string;
+  render?: (row: T) => React.ReactNode;
+  width?: string;
+}
 
-import * as React from "react"
+interface TableProps<T> {
+  columns: Column<T>[];
+  data: T[];
+  onRowClick?: (row: T) => void;
+  emptyMessage?: string;
+}
 
-import { cn } from "@/lib/utils"
-
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+export default function Table<T extends { [key: string]: any }>({
+  columns,
+  data,
+  onRowClick,
+  emptyMessage = "No data available.",
+}: TableProps<T>) {
   return (
-    <div
-      data-slot="table-container"
-      className="relative w-full overflow-x-auto"
-    >
-      <table
-        data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
-        {...props}
-      />
+    <div className="table-container">
+      <style>{`
+        .table-container {
+          overflow-x: auto;
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border);
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        thead tr {
+          background: var(--bg-elevated);
+          border-bottom: 1px solid var(--border);
+        }
+        th {
+          padding: 12px 16px;
+          text-align: left;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.8px;
+          text-transform: uppercase;
+          color: var(--text-muted);
+          white-space: nowrap;
+        }
+        tbody tr {
+          border-bottom: 1px solid var(--border-muted);
+          transition: background 0.12s;
+        }
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: var(--bg-elevated); }
+        tbody tr.clickable { cursor: pointer; }
+        td {
+          padding: 13px 16px;
+          font-size: 13.5px;
+          color: var(--text-secondary);
+          vertical-align: middle;
+        }
+        .table-empty {
+          padding: 48px 16px;
+          text-align: center;
+          color: var(--text-muted);
+          font-size: 13px;
+        }
+      `}</style>
+      <table>
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th key={String(col.key)} style={{ width: col.width }}>
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length}>
+                <div className="table-empty">{emptyMessage}</div>
+              </td>
+            </tr>
+          ) : (
+            data.map((row, i) => (
+              <tr
+                key={i}
+                className={onRowClick ? "clickable" : ""}
+                onClick={() => onRowClick?.(row)}
+              >
+                {columns.map((col) => (
+                  <td key={String(col.key)}>
+                    {col.render
+                      ? col.render(row)
+                      : row[col.key as keyof T]}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
-  )
-}
-
-function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
-  return (
-    <thead
-      data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
-      {...props}
-    />
-  )
-}
-
-function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
-  return (
-    <tbody
-      data-slot="table-body"
-      className={cn("[&_tr:last-child]:border-0", className)}
-      {...props}
-    />
-  )
-}
-
-function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
-  return (
-    <tfoot
-      data-slot="table-footer"
-      className={cn(
-        "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
-  return (
-    <tr
-      data-slot="table-row"
-      className={cn(
-        "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function TableHead({ className, ...props }: React.ComponentProps<"th">) {
-  return (
-    <th
-      data-slot="table-head"
-      className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function TableCell({ className, ...props }: React.ComponentProps<"td">) {
-  return (
-    <td
-      data-slot="table-cell"
-      className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function TableCaption({
-  className,
-  ...props
-}: React.ComponentProps<"caption">) {
-  return (
-    <caption
-      data-slot="table-caption"
-      className={cn("mt-4 text-sm text-muted-foreground", className)}
-      {...props}
-    />
-  )
-}
-
-export {
-  Table,
-  TableHeader,
-  TableBody,
-  TableFooter,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableCaption,
+  );
 }

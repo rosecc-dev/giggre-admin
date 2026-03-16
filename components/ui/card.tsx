@@ -1,103 +1,115 @@
-import * as React from "react"
+import { LucideIcon } from "lucide-react";
 
-import { cn } from "@/lib/utils"
+interface CardProps {
+  children: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}
 
-function Card({
-  className,
-  size = "default",
-  ...props
-}: React.ComponentProps<"div"> & { size?: "default" | "sm" }) {
+export function Card({ children, className = "", style }: CardProps) {
   return (
     <div
-      data-slot="card"
-      data-size={size}
-      className={cn(
-        "group/card flex flex-col gap-4 overflow-hidden rounded-xl bg-card py-4 text-sm text-card-foreground ring-1 ring-foreground/10 has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:gap-3 data-[size=sm]:py-3 data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
-        className
+      className={`ui-card ${className}`}
+      style={style}
+    >
+      <style>{`
+        .ui-card {
+          background: var(--bg-surface);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-lg);
+          padding: 24px;
+        }
+      `}</style>
+      {children}
+    </div>
+  );
+}
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  icon: LucideIcon;
+  color?: string;
+  trend?: { value: number; label: string };
+}
+
+export function StatCard({ label, value, icon: Icon, color = "var(--blue)", trend }: StatCardProps) {
+  const isPositive = trend && trend.value >= 0;
+
+  return (
+    <div className="stat-card">
+      <style>{`
+        .stat-card {
+          background: var(--bg-surface);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-lg);
+          padding: 20px 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          transition: box-shadow 0.2s, transform 0.2s;
+        }
+        .stat-card:hover {
+          box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+          transform: translateY(-2px);
+        }
+        .stat-card-top {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+        }
+        .stat-card-label {
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.3px;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          margin-bottom: 6px;
+        }
+        .stat-card-value {
+          font-size: 28px;
+          font-weight: 700;
+          color: var(--text-primary);
+          line-height: 1;
+          font-family: 'Space Mono', monospace;
+        }
+        .stat-card-icon-wrap {
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .stat-card-trend {
+          font-size: 12px;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .stat-card-trend.up { color: var(--green); }
+        .stat-card-trend.down { color: var(--red); }
+      `}</style>
+      <div className="stat-card-top">
+        <div>
+          <div className="stat-card-label">{label}</div>
+          <div className="stat-card-value">{value}</div>
+        </div>
+        <div
+          className="stat-card-icon-wrap"
+          style={{ backgroundColor: `${color}18` }}
+        >
+          <Icon size={20} style={{ color }} />
+        </div>
+      </div>
+      {trend && (
+        <div className={`stat-card-trend ${isPositive ? "up" : "down"}`}>
+          <span>{isPositive ? "↑" : "↓"} {Math.abs(trend.value)}%</span>
+          <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>{trend.label}</span>
+        </div>
       )}
-      {...props}
-    />
-  )
-}
-
-function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-header"
-      className={cn(
-        "group/card-header @container/card-header grid auto-rows-min items-start gap-1 rounded-t-xl px-4 group-data-[size=sm]/card:px-3 has-data-[slot=card-action]:grid-cols-[1fr_auto] has-data-[slot=card-description]:grid-rows-[auto_auto] [.border-b]:pb-4 group-data-[size=sm]/card:[.border-b]:pb-3",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-title"
-      className={cn(
-        "text-base leading-snug font-medium group-data-[size=sm]/card:text-sm",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-description"
-      className={cn("text-sm text-muted-foreground", className)}
-      {...props}
-    />
-  )
-}
-
-function CardAction({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-action"
-      className={cn(
-        "col-start-2 row-span-2 row-start-1 self-start justify-self-end",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-function CardContent({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-content"
-      className={cn("px-4 group-data-[size=sm]/card:px-3", className)}
-      {...props}
-    />
-  )
-}
-
-function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="card-footer"
-      className={cn(
-        "flex items-center rounded-b-xl border-t bg-muted/50 p-4 group-data-[size=sm]/card:p-3",
-        className
-      )}
-      {...props}
-    />
-  )
-}
-
-export {
-  Card,
-  CardHeader,
-  CardFooter,
-  CardTitle,
-  CardAction,
-  CardDescription,
-  CardContent,
+    </div>
+  );
 }

@@ -1,49 +1,62 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
+type BadgeVariant =
+  | "blue"
+  | "green"
+  | "amber"
+  | "red"
+  | "purple"
+  | "gray";
 
-import { cn } from "@/lib/utils"
-
-const badgeVariants = cva(
-  "group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-4xl border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3!",
-  {
-    variants: {
-      variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
-        secondary:
-          "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
-        destructive:
-          "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
-        outline:
-          "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
-        ghost:
-          "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
-        link: "text-primary underline-offset-4 hover:underline",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  }
-)
-
-function Badge({
-  className,
-  variant = "default",
-  asChild = false,
-  ...props
-}: React.ComponentProps<"span"> &
-  VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot.Root : "span"
-
-  return (
-    <Comp
-      data-slot="badge"
-      data-variant={variant}
-      className={cn(badgeVariants({ variant }), className)}
-      {...props}
-    />
-  )
+interface BadgeProps {
+  children: React.ReactNode;
+  variant?: BadgeVariant;
+  dot?: boolean;
 }
 
-export { Badge, badgeVariants }
+const VARIANT_STYLES: Record<BadgeVariant, { bg: string; text: string }> = {
+  blue:   { bg: "var(--blue-dim)",   text: "var(--blue)"   },
+  green:  { bg: "var(--green-dim)",  text: "var(--green)"  },
+  amber:  { bg: "var(--amber-dim)",  text: "var(--amber)"  },
+  red:    { bg: "var(--red-dim)",    text: "var(--red)"    },
+  purple: { bg: "var(--purple-dim)", text: "var(--purple)" },
+  gray:   { bg: "var(--bg-elevated)", text: "var(--text-secondary)" },
+};
+
+export default function Badge({
+  children,
+  variant = "gray",
+  dot = false,
+}: BadgeProps) {
+  const { bg, text } = VARIANT_STYLES[variant];
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        background: bg,
+        color: text,
+        fontSize: 11,
+        fontWeight: 700,
+        padding: "3px 9px",
+        borderRadius: 20,
+        textTransform: "capitalize",
+        whiteSpace: "nowrap",
+        letterSpacing: "0.2px",
+      }}
+    >
+      {dot && (
+        <span
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            background: text,
+            flexShrink: 0,
+          }}
+        />
+      )}
+      {children}
+    </span>
+  );
+}
