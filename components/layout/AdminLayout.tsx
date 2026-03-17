@@ -5,7 +5,6 @@ import { Bell, Search } from "lucide-react";
 import Link from "next/link";
 import Sidebar from "@/components/sidebar/Sidebar";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
-import ThemeToggle from "../ui/ThemeToggle";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
