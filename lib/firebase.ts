@@ -1,8 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from 'firebase/storage';
-
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
@@ -12,12 +11,19 @@ const firebaseConfig = {
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
-// ─────────────────────────────────────────────────────────────────────────────
 
-// Prevent re-initializing when Next.js hot-reloads in dev
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const googleProvider = new GoogleAuthProvider();
+
+// Request email + profile scopes explicitly (best practice)
+googleProvider.addScope("email");
+googleProvider.addScope("profile");
+
+// Always show account picker even if user is already signed in
+googleProvider.setCustomParameters({ prompt: "select_account" });
+
 export default app;

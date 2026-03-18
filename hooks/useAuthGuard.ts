@@ -3,26 +3,31 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import type { ModuleKey } from "@/lib/modules";
+
+interface GuardOptions {
+  roles?: Array<"super_admin" | "admin">;
+  module?: ModuleKey;
+  redirectTo?: string;
+}
 
 /**
- * useAuthGuard — redirect unauthenticated users to /login.
- *
- * Usage: call this at the top of any page or layout that requires auth.
- *
- * @param allowedRoles  Optional whitelist of roles. If omitted, any authenticated user passes.
+ * useAuthGuard — redirect unauthenticated or unauthorized users.
  *
  * @example
  *   // Any authenticated admin
  *   useAuthGuard();
  *
- *   // Superadmin only
- *   useAuthGuard(["superadmin"]);
+ *   // Super admin only page
+ *   useAuthGuard({ roles: ["super_admin"] });
+ *
+ *   // Module-gated page
+ *   useAuthGuard({ module: "reports" });
  */
-export function useAuthGuard(
-  allowedRoles?: Array<"superadmin" | "admin" | "moderator">
-) {
-  const { user, loading } = useAuth();
+export function useAuthGuard(options: GuardOptions = {}) {
+  const { user, loading, hasPermission } = useAuth();
   const router = useRouter();
+  const { roles, module, redirectTo = "/dashboard" } = options;
 
   useEffect(() => {
     if (loading) return;
@@ -32,11 +37,15 @@ export function useAuthGuard(
       return;
     }
 
-    if (allowedRoles && !allowedRoles.includes(user.role)) {
-      // Authenticated but wrong role — send to dashboard
-      router.replace("/dashboard");
+    if (roles && !roles.includes(user.role)) {
+      router.replace(redirectTo);
+      return;
     }
-  }, [user, loading, router, allowedRoles]);
 
-  return { user, loading };
+    if (module && !hasPermission(module)) {
+      router.replace(redirectTo);
+    }
+  }, [user, loading, router, roles, module, redirectTo, hasPermission]);
+
+  return { user, loading, hasPermission };
 }

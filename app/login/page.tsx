@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, googleProvider } from "@/lib/firebase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,7 +13,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
+  // ── Email/password login (unchanged) ──────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -23,7 +25,7 @@ export default function LoginPage() {
       const userDoc = await getDoc(doc(db, "users", credential.user.uid));
       if (!userDoc.exists()) {
         await auth.signOut();
-        setError("Account not found.");
+        setError("Account not found in admin system.");
         setLoading(false);
         return;
       }
@@ -43,6 +45,32 @@ export default function LoginPage() {
     }
   };
 
+  // ── Google OAuth login ─────────────────────────────────────────────────────
+const handleGoogleLogin = async () => {
+  setError("");
+  setGoogleLoading(true);
+  try {
+    await signInWithPopup(auth, googleProvider);
+    // AuthContext handles the rest — if the email isn't in admins,
+    // it signs out and setUser(null), which triggers useAuthGuard → /login
+    router.replace("/dashboard");
+  } catch (err: any) {
+    if (err.code === "auth/popup-closed-by-user") {
+      setGoogleLoading(false);
+      return;
+    }
+    if (err.code === "auth/popup-blocked") {
+      setError("Popup was blocked. Please allow popups for this site.");
+    } else {
+      setError("Sign-in failed. Your account may not be authorized.");
+    }
+    setGoogleLoading(false);
+  }
+};
+
+  const isAnyLoading = loading || googleLoading;
+
+  // ── Static data ───────────────────────────────────────────────────────────
   const features = [
     { label: "Manage Users & Workers", icon: <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0" /></svg> },
     { label: "Monitor Live Gigs",       icon: <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg> },
@@ -62,9 +90,6 @@ export default function LoginPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;600&display=swap');
 
-
-        /* ── LAYOUT ── */
-        /* The outer wrapper IS the two-column grid — fills viewport exactly */
         .page {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -108,7 +133,6 @@ export default function LoginPage() {
           background: radial-gradient(circle, rgba(249,115,22,0.08) 0%, transparent 70%);
           pointer-events: none;
         }
-
         .branding {
           position: relative;
           z-index: 1;
@@ -146,7 +170,6 @@ export default function LoginPage() {
           animation: pulse 2s ease-in-out infinite;
         }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
         .features { display: flex; flex-direction: column; gap: 14px; width: 100%; }
         .feature {
           display: flex; align-items: center; gap: 14px;
@@ -189,7 +212,6 @@ export default function LoginPage() {
           background: radial-gradient(circle, rgba(249,115,22,0.06) 0%, transparent 70%);
           pointer-events: none;
         }
-
         .form-wrap {
           position: relative; z-index: 1;
           width: 100%; max-width: 400px;
@@ -201,7 +223,6 @@ export default function LoginPage() {
           color: var(--text-primary); margin-bottom: 6px;
         }
         .form-head p { font-size: 14px; color: var(--text-secondary); }
-
         .card {
           background: var(--bg-surface);
           border: 1px solid var(--border);
@@ -211,6 +232,47 @@ export default function LoginPage() {
         }
         .form-fields { display: flex; flex-direction: column; gap: 20px; }
 
+        /* ── Google button ── */
+        .google-btn {
+          width: 100%;
+          padding: 11px;
+          background: var(--bg-elevated);
+          color: var(--text-primary);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          font-size: 14px; font-weight: 600; font-family: 'DM Sans', sans-serif;
+          cursor: pointer;
+          display: flex; align-items: center; justify-content: center; gap: 10px;
+          transition: background 0.2s, border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+          letter-spacing: 0.2px;
+        }
+        .google-btn:hover:not(:disabled) {
+          background: var(--bg-hover);
+          border-color: rgba(59,130,246,0.4);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .google-btn:active:not(:disabled) { transform: translateY(0); }
+        .google-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* ── Divider ── */
+        .divider {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          color: var(--text-muted);
+          font-size: 12px;
+          font-weight: 500;
+        }
+        .divider::before,
+        .divider::after {
+          content: '';
+          flex: 1;
+          height: 1px;
+          background: var(--border);
+        }
+
+        /* ── Remaining form styles (unchanged from original) ── */
         .err-box {
           background: var(--red-dim);
           border: 1px solid rgba(239,68,68,0.25);
@@ -220,7 +282,6 @@ export default function LoginPage() {
           color: #FCA5A5; font-size: 13px;
         }
         .err-box svg { flex-shrink: 0; margin-top: 1px; }
-
         .field-label {
           display: block; font-size: 11px; font-weight: 600;
           letter-spacing: 0.8px; text-transform: uppercase;
@@ -241,18 +302,15 @@ export default function LoginPage() {
         .field-input::placeholder { color: var(--text-muted); }
         .field-input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
         .field-input:disabled { opacity: 0.5; cursor: not-allowed; }
-
         .toggle-pw {
           position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
           color: var(--text-muted); display: flex; cursor: pointer;
           background: none; border: none; padding: 2px; transition: color 0.2s;
         }
         .toggle-pw:hover { color: var(--text-secondary); }
-
         .forgot-row { text-align: right; margin-top: -8px; }
         .forgot-row a { font-size: 12px; font-weight: 500; color: var(--blue); text-decoration: none; }
         .forgot-row a:hover { opacity: 0.8; }
-
         .submit-btn {
           width: 100%; padding: 13px;
           background: var(--blue); color: #fff;
@@ -262,19 +320,17 @@ export default function LoginPage() {
           transition: background 0.2s, transform 0.15s, box-shadow 0.2s; letter-spacing: 0.3px;
         }
         .submit-btn:hover:not(:disabled) {
-          background: var(--blue-hover);
+          background: #2563EB;
           transform: translateY(-1px);
           box-shadow: 0 8px 28px rgba(59,130,246,0.35);
         }
         .submit-btn:active:not(:disabled) { transform: translateY(0); }
         .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
         .footer-note { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 24px; }
-
         .spin { animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ── MOBILE BRANDING ── */
+        /* ── Mobile ── */
         .mobile-branding {
           display: none; flex-direction: column; align-items: center;
           gap: 16px; padding: 32px 24px 0; text-align: center;
@@ -289,34 +345,21 @@ export default function LoginPage() {
         }
         .mobile-pill svg { color: var(--blue); }
 
-        /* ── RESPONSIVE ── */
         @media (max-width: 1024px) {
           .left  { padding: 48px 32px; }
           .right { padding: 48px 32px; }
           .logo-img { width: 150px; }
         }
-
         @media (max-width: 768px) {
-          .page {
-            grid-template-columns: 1fr;
-            height: auto;
-            min-height: 100vh;
-            overflow: visible;
-          }
+          .page { grid-template-columns: 1fr; height: auto; min-height: 100vh; overflow: visible; }
           html, body { overflow: auto; }
           .left { display: none; }
-          .right {
-            padding: 0 0 40px;
-            align-items: stretch;
-            justify-content: flex-start;
-            overflow: hidden;
-          }
+          .right { padding: 0 0 40px; align-items: stretch; justify-content: flex-start; overflow: hidden; }
           .mobile-branding { display: flex; }
           .form-wrap { max-width: 100%; padding: 0 20px; margin-top: 24px; }
           .card { padding: 28px 24px; }
           .form-head h2 { font-size: 22px; }
         }
-
         @media (max-width: 400px) {
           .card { padding: 22px 18px; border-radius: var(--radius-lg); }
         }
@@ -380,8 +423,11 @@ export default function LoginPage() {
               <h2>Welcome back</h2>
               <p>Sign in to your admin account</p>
             </div>
+
             <div className="card">
-              <form className="form-fields" onSubmit={handleLogin}>
+              <div className="form-fields">
+
+                {/* Error box */}
                 {error && (
                   <div className="err-box">
                     <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
@@ -391,6 +437,34 @@ export default function LoginPage() {
                   </div>
                 )}
 
+                {/* ── Google sign-in ── */}
+                <button
+                  type="button"
+                  className="google-btn"
+                  onClick={handleGoogleLogin}
+                  disabled={isAnyLoading}
+                >
+                  {googleLoading ? (
+                    <svg className="spin" width="16" height="16" fill="none" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                      <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
+                    </svg>
+                  ) : (
+                    /* Official Google "G" logo SVG — required by Google's brand guidelines */
+                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                    </svg>
+                  )}
+                  {googleLoading ? "Signing in…" : "Continue with Google"}
+                </button>
+
+                {/* ── Divider ── */}
+                <div className="divider">or sign in with email</div>
+
+                {/* ── Email field ── */}
                 <div>
                   <label className="field-label">Email Address</label>
                   <div className="input-wrap">
@@ -399,10 +473,11 @@ export default function LoginPage() {
                     </span>
                     <input className="field-input" type="email" required value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="admin@giggre.com" disabled={loading} />
+                      placeholder="admin@giggre.com" disabled={isAnyLoading} />
                   </div>
                 </div>
 
+                {/* ── Password field ── */}
                 <div>
                   <label className="field-label">Password</label>
                   <div className="input-wrap">
@@ -411,9 +486,9 @@ export default function LoginPage() {
                     </span>
                     <input className="field-input" type={showPassword ? "text" : "password"}
                       required value={password} onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••" disabled={loading} />
+                      placeholder="••••••••" disabled={isAnyLoading} />
                     <button type="button" className="toggle-pw"
-                      onClick={() => setShowPassword(!showPassword)} disabled={loading}>
+                      onClick={() => setShowPassword(!showPassword)} disabled={isAnyLoading}>
                       {showPassword ? (
                         <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
                       ) : (
@@ -425,19 +500,24 @@ export default function LoginPage() {
 
                 <div className="forgot-row"><a href="#">Forgot password?</a></div>
 
-                <button type="submit" className="submit-btn" disabled={loading}>
-                  {loading ? (
-                    <>
-                      <svg className="spin" width="16" height="16" fill="none" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
-                        <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
-                      </svg>
-                      Signing in…
-                    </>
-                  ) : "Sign In"}
-                </button>
-              </form>
+                {/* ── Submit ── */}
+                <form onSubmit={handleLogin}>
+                  <button type="submit" className="submit-btn" disabled={isAnyLoading}>
+                    {loading ? (
+                      <>
+                        <svg className="spin" width="16" height="16" fill="none" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75" />
+                        </svg>
+                        Signing in…
+                      </>
+                    ) : "Sign In with Email"}
+                  </button>
+                </form>
+
+              </div>
             </div>
+
             <p className="footer-note">© 2026 Giggre. All rights reserved.</p>
           </div>
         </main>

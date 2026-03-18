@@ -5,6 +5,7 @@ import { Bell, Search } from "lucide-react";
 import Link from "next/link";
 import Sidebar from "@/components/sidebar/Sidebar";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import ThemeToggle from "../ui/ThemeToggle";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -212,7 +213,7 @@ export default function AdminLayout({
               <Search size={13} color="var(--text-muted)" />
               <input placeholder="Search…" />
             </div>
-
+            <ThemeToggle/>
             {/* <button className="topbar-icon-btn" title="Notifications">
               <Bell size={15} />
               <span className="notif-dot" />
