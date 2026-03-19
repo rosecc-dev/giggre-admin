@@ -223,7 +223,7 @@ export default function LoginPage() {
         }
         .form-head p { font-size: 14px; color: var(--text-secondary); }
         .card {
-          background: var(--bg-surface);
+          background: var(--bg-base);
           border: 1px solid var(--border);
           border-radius: var(--radius-xl);
           padding: 36px;
