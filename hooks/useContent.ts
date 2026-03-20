@@ -1,25 +1,5 @@
 "use client";
 
-// ─── hooks/useContent.ts ──────────────────────────────────────────────────────
-//
-// Data hook for the Content Management feature.
-//
-// Visibility rule (replaces the old `published` boolean field):
-//   sortNumber === 0  →  item is hidden (not displayed in the app)
-//   sortNumber  > 0  →  item is visible and ordered by that value (ascending)
-//
-// The `published` field no longer exists on any document.
-// The single source of truth for both visibility and ordering is `sortNumber`.
-//
-// Public helper:
-//   isVisible(item)  →  item.sortNumber > 0
-//
-// The hook exposes `toggleVisibility` (replaces `togglePublish`).
-// When hiding:  sets sortNumber to 0, stores the previous value in
-//               `lastSortNumber` so the UI can restore it if desired.
-// When showing: restores `lastSortNumber` if available, otherwise defaults to 1.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { useState, useCallback } from "react";
 import {
   collection,
