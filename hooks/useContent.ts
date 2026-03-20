@@ -20,15 +20,7 @@ import type { ContentSectionKey, LogPayload } from "@/lib/activitylog";
 
 export interface BaseItem {
   id: string;
-  /** Visibility + ordering in one field.
-   *  0  → hidden (not shown in the app)
-   *  >0 → visible, ordered ascending by this value */
   sortNumber: number;
-  /**
-   * Preserved whenever the item is hidden (sortNumber set to 0).
-   * Restored when the item is made visible again so ordering is not lost.
-   * Never stored on new items — only written by toggleVisibility.
-   */
   lastSortNumber?: number;
   dateCreated: Date | null;
   dateUpdated: Date | null;
@@ -429,83 +421,6 @@ export function useContent(actor: ActorInfo) {
     [log],
   );
 
-  // ── toggleVisibility ─────────────────────────────────────────────────────
-  //
-  // Replaces togglePublish.  Visibility is controlled entirely by sortNumber:
-  //
-  //   Hiding  (visible → hidden):
-  //     • Saves current sortNumber into lastSortNumber  (so it can be restored)
-  //     • Sets sortNumber to 0
-  //
-  //   Showing (hidden → visible):
-  //     • Restores lastSortNumber if it exists and is > 0
-  //     • Falls back to 1 if lastSortNumber is absent or 0
-  //     • Clears lastSortNumber (no longer needed)
-  const toggleVisibility = useCallback(
-    async (
-      sectionKey:   ContentSectionKey,
-      sectionLabel: string,
-      item:         ContentItem,
-    ): Promise<{ success: boolean; error?: string }> => {
-      const currentlyVisible = isVisible(item);
-      const title = getItemTitle(item, sectionKey);
-
-      let patch: Record<string, any>;
-
-      if (currentlyVisible) {
-        // Hide: save current position, zero out sort
-        patch = {
-          lastSortNumber: item.sortNumber,
-          sortNumber:     0,
-          dateUpdated:    serverTimestamp(),
-        };
-      } else {
-        // Show: restore last known position (fall back to 1)
-        const restored =
-          item.lastSortNumber != null && item.lastSortNumber > 0
-            ? item.lastSortNumber
-            : 1;
-        patch = {
-          sortNumber:     restored,
-          lastSortNumber: null,   // clear — no longer needed
-          dateUpdated:    serverTimestamp(),
-        };
-      }
-
-      try {
-        await updateDoc(
-          doc(db, "app_content", sectionKey, "items", item.id),
-          patch,
-        );
-
-        await updateDoc(doc(db, "app_content", sectionKey), {
-          lastUpdated: serverTimestamp(),
-        });
-
-        await log({
-          module:      "content_management",
-          action:      currentlyVisible ? "content_unpublished" : "content_published",
-          description: currentlyVisible
-            ? buildDescription.contentUnpublished(sectionLabel, title)
-            : buildDescription.contentPublished(sectionLabel, title),
-          targetSection: sectionKey,
-          targetId:    item.id,
-          targetName:  title,
-          affectedFiles: [itemPath(sectionKey, item.id)],
-          meta: {
-            from: { sortNumber: item.sortNumber },
-            to:   { sortNumber: patch.sortNumber },
-          },
-        });
-
-        return { success: true };
-      } catch (err: any) {
-        return { success: false, error: err.message ?? "Failed to toggle visibility." };
-      }
-    },
-    [log],
-  );
-
   // ── saveSettings ─────────────────────────────────────────────────────────
   const saveSettings = useCallback(
     async (
@@ -550,7 +465,6 @@ export function useContent(actor: ActorInfo) {
     createItem,
     updateItem,
     deleteItem,
-    toggleVisibility,   // replaces togglePublish
     saveSettings,
   };
 }

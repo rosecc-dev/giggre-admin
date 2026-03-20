@@ -273,7 +273,7 @@ function SectionPanel({
   content: ReturnType<typeof useContent>;
 }) {
   const meta = getSectionMeta(sectionKey);
-  const { submitting, createItem, updateItem, deleteItem, togglePublish, saveSettings } = content;
+  const { submitting, createItem, updateItem, deleteItem, saveSettings } = content;
 
   const [expanded, setExpanded] = useState(false);
   const [creating, setCreating] = useState(false);
