@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AdminLayout from "@/components/layout/AdminLayout";
 import Badge from "@/components/ui/Badge";
@@ -27,6 +27,7 @@ import {
   ArrowLeft, User, MapPin, Star, Briefcase,
   Clock, Shield, Wrench, Plus, Trash2, ChevronLeft, ChevronRight, CheckCircle,
   Copy, Check, Ban, ShieldOff, ShieldCheck, AlertTriangle, History,
+  GitBranch, BadgeCheck, ExternalLink,
 } from "lucide-react";
 import { useCurrency } from "@/context/CurrencyContext";
 
@@ -70,6 +71,14 @@ interface UserDoc {
   skillsXP: Record<string, number>;
   // Host-eligible reward skills
   hostRewardSkills: string[];
+  // Referrals
+  referral_code: string | null;
+  referral_level: number;
+  referrals_count: number;
+  verified_referrals: number;
+  referredByName: string | null;
+  referredByUID: string | null;
+  referred_by: string | null;
 }
 
 interface SkillEntry {
@@ -183,6 +192,13 @@ function toUserDoc(id: string, d: Record<string, any>): UserDoc {
     skills:            Array.isArray(d.skills)   ? d.skills   : [],
     skillsXP:          d.skillsXP && typeof d.skillsXP === "object" ? d.skillsXP : {},
     hostRewardSkills:  Array.isArray(d.hostRewardSkills) ? d.hostRewardSkills : [],
+    referral_code:     typeof (d.referrals as any)?.referral_code === "string" ? (d.referrals as any).referral_code : null,
+    referral_level:    typeof (d.referrals as any)?.referral_level === "number" ? (d.referrals as any).referral_level : 0,
+    referrals_count:   typeof (d.referrals as any)?.referrals_count === "number" ? (d.referrals as any).referrals_count : 0,
+    verified_referrals: typeof (d.referrals as any)?.verified_referrals === "number" ? (d.referrals as any).verified_referrals : 0,
+    referredByName:    typeof (d.referrals as any)?.referredByName === "string" ? (d.referrals as any).referredByName : null,
+    referredByUID:     typeof (d.referrals as any)?.referredByUID === "string" ? (d.referrals as any).referredByUID : null,
+    referred_by:       typeof d.referred_by === "string" ? d.referred_by : null,
   };
 }
 
@@ -838,6 +854,18 @@ export default function UserProfilePage() {
   const [suspendModalOpen, setSuspendModalOpen] = useState(false);
   const [suspensionHistory, setSuspensionHistory]   = useState<SuspensionHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading]         = useState(false);
+  const [verificationStatus, setVerificationStatus] = useState<"verified" | "pending" | "rejected" | "cancelled" | null>(null);
+  const [verifiedAt, setVerifiedAt]                 = useState<Timestamp | null>(null);
+  const [referredUsers, setReferredUsers]           = useState<{ uid: string; name: string; email: string; referral_code_used: string | null; joined_at: Timestamp | null; verified_at: Timestamp | null }[]>([]);
+  const [referredUsersLoading, setReferredUsersLoading] = useState(false);
+  const [referredUsersPage, setReferredUsersPage]   = useState(1);
+  const [activeSkillTab, setActiveSkillTab]         = useState<"skills" | "requests">("skills");
+  const [userSkillRequests, setUserSkillRequests]   = useState<{
+    id: string; skillName: string; skillCategory: string; status: string;
+    reason: string; experienceLevel: string; createdAt: Timestamp | null;
+    updatedAt: Timestamp | null; adminRemarks: string; skill_req_Id: string;
+  }[]>([]);
+  const [userRequestsLoading, setUserRequestsLoading] = useState(false);
 
   const GIGS_PAGE_SIZE = 10;
 
@@ -991,6 +1019,70 @@ export default function UserProfilePage() {
     });
   }, [userId]);
 
+  // ── Fetch referred users list ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    setReferredUsersLoading(true);
+    getDocs(collection(db, "users", userId, "referrals_list"))
+      .then(async (snap) => {
+        const base = snap.docs.map((d) => {
+          const data = d.data() as Record<string, any>;
+          return {
+            uid: d.id,
+            name: typeof data.name === "string" ? data.name : d.id,
+            email: typeof data.email === "string" ? data.email : "",
+            referral_code_used: typeof data.referral_code_used === "string" ? data.referral_code_used : null,
+            joined_at: data.joined_at instanceof Timestamp ? data.joined_at : null,
+            verified_at: null as Timestamp | null,
+          };
+        });
+        // Batch-fetch verification_requests in chunks of 30
+        const uids = base.map((u) => u.uid);
+        const chunks: string[][] = [];
+        for (let i = 0; i < uids.length; i += 30) chunks.push(uids.slice(i, i + 30));
+        const verifSnaps = await Promise.all(
+          chunks.map((chunk) => getDocs(query(collection(db, "verification_requests"), where("userId", "in", chunk))))
+        );
+        const verifiedAtMap: Record<string, Timestamp> = {};
+        verifSnaps.forEach((s) => {
+          s.docs.forEach((d) => {
+            const data = d.data() as Record<string, any>;
+            if (data.status === "verified" && data.reviewedAt instanceof Timestamp) {
+              verifiedAtMap[data.userId] = data.reviewedAt;
+            }
+          });
+        });
+        base.forEach((u) => { u.verified_at = verifiedAtMap[u.uid] ?? null; });
+        base.sort((a, b) => (b.joined_at?.toMillis() ?? 0) - (a.joined_at?.toMillis() ?? 0));
+        setReferredUsers(base);
+      })
+      .catch((err) => console.warn("[UserProfile] referrals_list error:", err))
+      .finally(() => setReferredUsersLoading(false));
+  }, [userId]);
+
+  // ── Fetch verification status ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    getDocs(query(collection(db, "verification_requests"), where("userId", "==", userId)))
+      .then((snap) => {
+        const verified = snap.docs.find((d) => d.data().status === "verified");
+        if (verified) {
+          const data = verified.data() as Record<string, any>;
+          setVerificationStatus("verified");
+          setVerifiedAt(data.reviewedAt instanceof Timestamp ? data.reviewedAt : null);
+        } else if (!snap.empty) {
+          const latest = snap.docs.sort((a, b) => {
+            const ta = a.data().submittedAt instanceof Timestamp ? a.data().submittedAt.toMillis() : 0;
+            const tb = b.data().submittedAt instanceof Timestamp ? b.data().submittedAt.toMillis() : 0;
+            return tb - ta;
+          })[0];
+          setVerificationStatus(latest.data().status ?? null);
+          setVerifiedAt(null);
+        }
+      })
+      .catch((err) => console.warn("[UserProfile] verification fetch error:", err));
+  }, [userId]);
+
   // ── Real-time skills collection listener ─────────────────────────────────
   useEffect(() => {
     const unsub = onSnapshot(
@@ -1006,6 +1098,37 @@ export default function UserProfilePage() {
     );
     return () => unsub();
   }, []);
+
+  // ── Fetch skill requests for this user ────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    setUserRequestsLoading(true);
+    const q = query(collection(db, "skill_requests"), where("userId", "==", userId));
+    const unsub = onSnapshot(q, (snap) => {
+      const reqs = snap.docs.map((d) => {
+        const data = d.data() as Record<string, any>;
+        return {
+          id: d.id,
+          skillName: data.skillName ?? "",
+          skillCategory: data.skillCategory ?? "",
+          status: data.status ?? "pending",
+          reason: data.reason ?? "",
+          experienceLevel: data.experienceLevel ?? "",
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt : null,
+          updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt : null,
+          adminRemarks: data.adminRemarks ?? "",
+          skill_req_Id: data.skill_req_Id ?? "",
+        };
+      });
+      reqs.sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
+      setUserSkillRequests(reqs);
+      setUserRequestsLoading(false);
+    }, (err) => {
+      console.warn("[UserProfile] skill_requests listener error:", err);
+      setUserRequestsLoading(false);
+    });
+    return () => unsub();
+  }, [userId]);
 
   // ── Save skills ───────────────────────────────────────────────────────────
   const handleSaveSkills = useCallback(async (newSkillsXP: Record<string, number>) => {
@@ -1280,6 +1403,9 @@ export default function UserProfilePage() {
           <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2 }}>{userData.email}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
             {statusBadge}
+            {verificationStatus === "verified" && (
+              <Badge variant="blue"><ShieldCheck size={11} style={{ marginRight: 3 }} />Verified</Badge>
+            )}
             {/* <Badge variant="blue">{userData.role}</Badge> */}
             {/* <Badge variant="gray">{userData.signInMethod}</Badge> */}
           </div>
@@ -1295,7 +1421,36 @@ export default function UserProfilePage() {
           <InfoRow label="User ID" value={userData.id} mono />
           <InfoRow label="Phone" value={userData.phone} />
           <InfoRow label="Balance" value={<strong>{formatBalance(userData.balance, symbol)}</strong>} />
-          <InfoRow label="Joined" value={formatDate(userData.createdAt)} />
+          <InfoRow label="Date Registered" value={formatDate(userData.createdAt)} />
+          <InfoRow
+            label="Referred By"
+            value={
+              userData.referredByName
+                ? <button
+                    onClick={() => userData.referredByUID && router.push(`/users/${userData.referredByUID}`)}
+                    style={{ background: "none", border: "none", padding: 0, color: "var(--blue)", cursor: userData.referredByUID ? "pointer" : "default", fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}
+                  >
+                    {userData.referredByName}
+                    {userData.referredByUID && <ExternalLink size={11} style={{ opacity: 0.6 }} />}
+                  </button>
+                : <span style={{ color: "var(--text-muted)" }}>—</span>
+            }
+          />
+          <InfoRow
+            label="Verified"
+            value={
+              verificationStatus === "verified"
+                ? <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <ShieldCheck size={13} style={{ color: "var(--blue)" }} />
+                    <span style={{ color: "var(--blue)", fontWeight: 600 }}>
+                      {verifiedAt ? formatDate(verifiedAt) : "Yes"}
+                    </span>
+                  </span>
+                : verificationStatus === "pending"
+                  ? <Badge variant="orange" dot>Pending</Badge>
+                  : <span style={{ color: "var(--text-muted)" }}>Not verified</span>
+            }
+          />
           <InfoRow label="Location" value={
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <MapPin size={11} style={{ color: "var(--text-muted)" }} />
@@ -1396,90 +1551,302 @@ export default function UserProfilePage() {
           </div>
         </SectionCard>
 
-        {/* Skills */}
-        <SectionCard title="Skills (XP)" icon={Wrench}>
-          {skillEntries.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic", padding: "8px 0" }}>
-              No skills assigned.{" "}
-              <button
-                style={{ background: "none", border: "none", color: "var(--blue)", cursor: "pointer", fontSize: 13, padding: 0 }}
-                onClick={() => setSkillsModalOpen(true)}
-              >
-                Add skills →
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, paddingTop: 4 }}>
-              {skillEntries.map(([skillName, level]) => (
-                <div
-                  key={skillName}
-                  style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 20, padding: "4px 12px 4px 8px", fontSize: 12 }}
+        {/* Referrals */}
+        <SectionCard title="Referrals" icon={GitBranch}>
+          <InfoRow
+            label="Referral Code"
+            value={
+              userData.referral_code
+                ? <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 8px", letterSpacing: "0.5px" }}>{userData.referral_code}</span>
+                : <span style={{ color: "var(--text-muted)" }}>—</span>
+            }
+          />
+          <InfoRow label="Level" value={userData.referral_level > 0 ? `Level ${userData.referral_level}` : <span style={{ color: "var(--text-muted)" }}>—</span>} />
+          <InfoRow label="Total Referrals" value={userData.referrals_count} />
+          <InfoRow
+            label="Verified Referrals"
+            value={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <BadgeCheck size={13} style={{ color: "var(--blue)" }} />
+                <span style={{ fontWeight: 600, color: "var(--blue)" }}>{userData.verified_referrals}</span>
+              </span>
+            }
+          />
+          {userData.referredByName && (
+            <InfoRow
+              label="Referred By"
+              value={
+                <button
+                  onClick={() => userData.referredByUID && userData.referredByUID !== "none" && router.push(`/users/${userData.referredByUID}`)}
+                  style={{ background: "none", border: "none", padding: 0, color: "var(--blue)", cursor: userData.referredByUID ? "pointer" : "default", fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}
                 >
-                  <span style={{ width: 20, height: 20, borderRadius: "50%", background: "var(--blue-dim)", color: "var(--blue)", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    {level}
-                  </span>
-                  <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{skillName}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {skillEntries.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <Button variant="secondary" size="sm" icon={Wrench} onClick={() => setSkillsModalOpen(true)}>
-                Edit Skills
-              </Button>
-            </div>
+                  {userData.referredByName !== "none" ? userData.referredByName : "Self-Registered"}
+                  {userData.referredByUID && userData.referredByUID !== "none" && <ExternalLink size={11} style={{ opacity: 0.6 }} />}
+                </button>
+              }
+            />
           )}
         </SectionCard>
 
-        {/* Host-Eligible Reward Skills */}
-        <SectionCard title="Host-Eligible Reward Skills" icon={Star}>
-          {userData.hostRewardSkills.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic", padding: "8px 0" }}>
-              No reward skills assigned.{" "}
-              <button
-                style={{ background: "none", border: "none", color: "var(--blue)", cursor: "pointer", fontSize: 13, padding: 0 }}
-                onClick={() => setHostRewardSkillsModalOpen(true)}
-              >
-                Add skills →
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, paddingTop: 4 }}>
-              {userData.hostRewardSkills.map((skillName) => (
-                <div
-                  key={skillName}
-                  style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 20, padding: "4px 12px", fontSize: 12 }}
-                >
-                  <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{skillName}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {userData.hostRewardSkills.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <Button variant="secondary" size="sm" icon={Wrench} onClick={() => setHostRewardSkillsModalOpen(true)}>
-                Edit Reward Skills
-              </Button>
-            </div>
-          )}
-        </SectionCard>
+      </div>
 
-        {/* Legacy skills array */}
-        {userData.skills.length > 0 && (
-          <SectionCard title="Legacy Skills" icon={Wrench}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {userData.skills.map((s, i) => (
-                <span
-                  key={i}
-                  style={{ fontSize: 11, fontWeight: 600, background: "var(--blue-dim)", color: "var(--blue)", borderRadius: 20, padding: "2px 10px" }}
-                >
-                  {s}
-                </span>
-              ))}
+      {/* Skills & User Requests Tabs */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+          {/* Tab header */}
+          <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+            {(["skills", "requests"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveSkillTab(tab)}
+                style={{
+                  padding: "12px 20px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: "none",
+                  borderBottom: `2px solid ${activeSkillTab === tab ? "var(--blue)" : "transparent"}`,
+                  background: "none",
+                  cursor: "pointer",
+                  color: activeSkillTab === tab ? "var(--blue)" : "var(--text-muted)",
+                  marginBottom: -1,
+                  transition: "color 0.15s",
+                  fontFamily: "inherit",
+                }}
+              >
+                {tab === "skills"
+                  ? "Skills"
+                  : `User Requests${userSkillRequests.length > 0 ? ` (${userSkillRequests.length})` : ""}`}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div style={{ padding: "20px 24px" }}>
+            {activeSkillTab === "skills" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+                {/* Skills (XP) */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <Wrench size={14} style={{ color: "var(--blue)" }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>Skills (XP)</span>
+                  </div>
+                  {skillEntries.length === 0 ? (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
+                      No skills assigned.{" "}
+                      <button style={{ background: "none", border: "none", color: "var(--blue)", cursor: "pointer", fontSize: 13, padding: 0 }} onClick={() => setSkillsModalOpen(true)}>
+                        Add skills →
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {skillEntries.map(([skillName, level]) => (
+                          <div key={skillName} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 20, padding: "4px 12px 4px 8px", fontSize: 12 }}>
+                            <span style={{ width: 20, height: 20, borderRadius: "50%", background: "var(--blue-dim)", color: "var(--blue)", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{level}</span>
+                            <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{skillName}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 12 }}>
+                        <Button variant="secondary" size="sm" icon={Wrench} onClick={() => setSkillsModalOpen(true)}>Edit Skills</Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Host-Eligible Reward Skills */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <Star size={14} style={{ color: "var(--blue)" }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>Host-Eligible Reward Skills</span>
+                  </div>
+                  {userData.hostRewardSkills.length === 0 ? (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
+                      No reward skills assigned.{" "}
+                      <button style={{ background: "none", border: "none", color: "var(--blue)", cursor: "pointer", fontSize: 13, padding: 0 }} onClick={() => setHostRewardSkillsModalOpen(true)}>
+                        Add skills →
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {userData.hostRewardSkills.map((skillName) => (
+                          <div key={skillName} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 20, padding: "4px 12px", fontSize: 12 }}>
+                            <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{skillName}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ marginTop: 12 }}>
+                        <Button variant="secondary" size="sm" icon={Wrench} onClick={() => setHostRewardSkillsModalOpen(true)}>Edit Reward Skills</Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Legacy Skills */}
+                {userData.skills.length > 0 && (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <Wrench size={14} style={{ color: "var(--text-muted)" }} />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>Legacy Skills</span>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {userData.skills.map((s, i) => (
+                        <span key={i} style={{ fontSize: 11, fontWeight: 600, background: "var(--blue-dim)", color: "var(--blue)", borderRadius: 20, padding: "2px 10px" }}>{s}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* User Requests tab */
+              userRequestsLoading ? (
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading requests…</div>
+              ) : userSkillRequests.length === 0 ? (
+                <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>No skill requests found.</div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                        {["Ticket", "Skill", "Category", "Level", "Status", "Submitted", "Admin Remarks"].map((h) => (
+                          <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userSkillRequests.map((req) => {
+                        const statusColor =
+                          req.status === "approved" ? "var(--green)" :
+                          req.status === "rejected" ? "var(--red)" : "var(--amber,#f59e0b)";
+                        const statusBg =
+                          req.status === "approved" ? "var(--green-dim)" :
+                          req.status === "rejected" ? "var(--red-dim)" : "rgba(245,158,11,0.12)";
+                        return (
+                          <tr key={req.id} style={{ borderBottom: "1px solid var(--border-muted)" }}>
+                            <td style={{ padding: "9px 10px", fontFamily: "monospace", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{req.skill_req_Id || req.id.slice(0, 8)}</td>
+                            <td style={{ padding: "9px 10px", fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{req.skillName}</td>
+                            <td style={{ padding: "9px 10px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{req.skillCategory || "—"}</td>
+                            <td style={{ padding: "9px 10px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{req.experienceLevel || "—"}</td>
+                            <td style={{ padding: "9px 10px" }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, borderRadius: 20, padding: "2px 8px", background: statusBg, color: statusColor, textTransform: "capitalize" }}>
+                                {req.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: "9px 10px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                              {req.createdAt ? req.createdAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                            </td>
+                            <td style={{ padding: "9px 10px", color: "var(--text-secondary)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {req.adminRemarks || <span style={{ color: "var(--text-muted)" }}>—</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Referred Users */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+          <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <GitBranch size={15} style={{ color: "var(--blue)" }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>Referred Users</span>
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({userData.referrals_count} total · <span style={{ color: "var(--blue)", fontWeight: 600 }}>{userData.verified_referrals} verified</span>)</span>
             </div>
-          </SectionCard>
-        )}
+          </div>
+          {(() => {
+            const REF_PAGE_SIZE = 5;
+            const totalRefPages = Math.max(1, Math.ceil(referredUsers.length / REF_PAGE_SIZE));
+            const safeRefPage = Math.min(referredUsersPage, totalRefPages);
+            const pagedRef = referredUsers.slice((safeRefPage - 1) * REF_PAGE_SIZE, safeRefPage * REF_PAGE_SIZE);
+            return referredUsersLoading ? (
+              <div style={{ padding: "20px 24px", fontSize: 13, color: "var(--text-muted)" }}>Loading…</div>
+            ) : referredUsers.length === 0 ? (
+              <div style={{ padding: "20px 24px", fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>No referred users found.</div>
+            ) : (
+              <>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border-muted)" }}>
+                        {["Name", "Email", "Code Used", "Joined", "Date Verified"].map((h) => (
+                          <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                        <th style={{ width: 32 }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedRef.map((u) => (
+                        <tr
+                          key={u.uid}
+                          style={{ borderTop: "1px solid var(--border-muted)", cursor: "pointer", transition: "background 0.1s" }}
+                          onClick={() => router.push(`/users/${u.uid}`)}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = "var(--bg-elevated)"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = ""; }}
+                        >
+                          <td style={{ padding: "10px 16px", fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              {u.name}
+                              <ExternalLink size={11} style={{ opacity: 0.4 }} />
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px 16px", fontSize: 13, color: "var(--text-muted)" }}>{u.email || "—"}</td>
+                          <td style={{ padding: "10px 16px" }}>
+                            {u.referral_code_used
+                              ? <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 11, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 6px", letterSpacing: "0.5px" }}>{u.referral_code_used}</span>
+                              : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                          </td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                            {u.joined_at ? u.joined_at.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                          </td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, whiteSpace: "nowrap" }}>
+                            {u.verified_at
+                              ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--blue)", fontWeight: 600 }}>
+                                  <BadgeCheck size={12} />
+                                  {u.verified_at.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                </span>
+                              : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                          </td>
+                          <td style={{ width: 32 }} />
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {(
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: "1px solid var(--border-muted)" }}>
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      {(safeRefPage - 1) * REF_PAGE_SIZE + 1}–{Math.min(safeRefPage * REF_PAGE_SIZE, referredUsers.length)} of {referredUsers.length}
+                    </span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={() => setReferredUsersPage((p) => Math.max(1, p - 1))}
+                        disabled={safeRefPage === 1}
+                        style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-elevated)", color: safeRefPage === 1 ? "var(--text-muted)" : "var(--text-primary)", cursor: safeRefPage === 1 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: safeRefPage === 1 ? 0.4 : 1 }}
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <button
+                        onClick={() => setReferredUsersPage((p) => Math.min(totalRefPages, p + 1))}
+                        disabled={safeRefPage === totalRefPages}
+                        style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-elevated)", color: safeRefPage === totalRefPages ? "var(--text-muted)" : "var(--text-primary)", cursor: safeRefPage === totalRefPages ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: safeRefPage === totalRefPages ? 0.4 : 1 }}
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
       </div>
 
       {/* Gigs Posted */}

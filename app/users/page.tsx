@@ -647,6 +647,7 @@ export default function UsersPage() {
   const [purgeLoading, setPurgeLoading]   = useState(false);
   const [purgeResult, setPurgeResult]     = useState<{ deleted: { id: string; name: string; email: string }[]; count: number; errors?: { id: string; error: string }[]; error?: string } | null>(null);
   const [purgeModalOpen, setPurgeModalOpen] = useState(false);
+  const [verifiedDatesMap, setVerifiedDatesMap] = useState<Record<string, Timestamp | null>>({});
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", email: "", phone: "", password: "", role: "user", pendingDeletion: false, scheduledDeleteAt: "" });
@@ -717,6 +718,20 @@ export default function UsersPage() {
         setSuspensionTiers(tiers);
       }
     }).catch((err) => console.warn("[UsersPage] Failed to load suspension config:", err));
+  }, []);
+
+  // ── Fetch verified dates from verification_requests ──────────────────────
+  useEffect(() => {
+    getDocs(query(collection(db, "verification_requests"), where("status", "==", "verified")))
+      .then((snap) => {
+        const map: Record<string, Timestamp | null> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          if (data.userId) map[data.userId] = data.reviewedAt instanceof Timestamp ? data.reviewedAt : null;
+        });
+        setVerifiedDatesMap(map);
+      })
+      .catch((err) => console.warn("[UsersPage] Failed to load verified dates:", err));
   }, []);
 
   // ── Real-time listener ────────────────────────────────────────────────────
@@ -1298,16 +1313,16 @@ export default function UsersPage() {
                 </button>
               );
             })}
-            {/* <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} /> */}
-            {/* <button
+            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
+            <button
               className={`up-filter-btn${newUsersOnly ? " active" : ""}`}
               style={newUsersOnly ? { borderColor: "var(--blue)", color: "var(--blue)", background: "var(--blue-dim)" } : undefined}
               onClick={() => { setNewUsersOnly((v) => !v); setPage(1); }}
             >
               New (7d)
               <span className="up-filter-count">{newUsersCount}</span>
-            </button> */}
-            {/* <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
+            </button>
+            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
             <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, whiteSpace: "nowrap" }}>Joined:</span>
               <input
@@ -1344,7 +1359,7 @@ export default function UsersPage() {
                   <X size={11} />
                 </button>
               )}
-            </div> */}
+            </div>
           </div>
 
           {/* Toolbar */}
@@ -1422,6 +1437,7 @@ export default function UsersPage() {
                   <th>Phone</th>
                   <th>Balance</th>
                   <th>Joined</th>
+                  <th>Date Verified</th>
                   <th>Status</th>
                   <th style={{ width: 40 }} />
                 </tr>
@@ -1460,7 +1476,7 @@ export default function UsersPage() {
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                               <div className="up-name">{user.name}</div>
-                              {/* {user.isVerified === "verified" ? (
+                              {user.isVerified === "verified" ? (
                                 <span title="Verified" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: "var(--blue)", background: "var(--blue-dim)", borderRadius: 20, padding: "1px 6px", whiteSpace: "nowrap" }}>
                                   <CheckCircle size={10} />
                                   Verified
@@ -1470,7 +1486,7 @@ export default function UsersPage() {
                                   <ShieldOff size={10} />
                                   Unverified
                                 </span>
-                              )} */}
+                              )}
                               <button className={`copy-btn${copiedKey === `${user.id}-name` ? " copied" : ""}`} title="Copy name" onClick={() => handleCopy(`${user.id}-name`, user.name)}>
                                 {copiedKey === `${user.id}-name` ? <Check size={11} /> : <Copy size={11} />}
                               </button>
@@ -1502,6 +1518,7 @@ export default function UsersPage() {
                             {formatBalance(user.balance, symbol)}
                           </td>
                           <td>{formatDate(user.createdAt)}</td>
+                          <td>{formatDate(verifiedDatesMap[user.userId] ?? null)}</td>
                           <td>
                             {statusBadge}
                           </td>

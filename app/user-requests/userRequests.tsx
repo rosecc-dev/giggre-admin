@@ -2,13 +2,13 @@
 
 import React, { useEffect, useState, useMemo, useRef } from "react"
 import {
-  collection, getDocs, onSnapshot, orderBy, query, doc, updateDoc,
+  collection, getDocs, onSnapshot, orderBy, query, doc, updateDoc, setDoc,
   serverTimestamp, Timestamp, where, limit,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import "./userRequestsStyle.css"
 import Modal from "@/components/ui/Modal"
-import { Eye, Check, X, RefreshCw, Search, User, ChevronUp, ChevronDown, RotateCcw, Calendar, FileText, CheckCircle2, XCircle, MessageSquare, Send } from "lucide-react"
+import { Eye, Check, X, RefreshCw, Search, User, ChevronUp, ChevronDown, RotateCcw, Calendar, FileText, CheckCircle2, XCircle, MessageSquare, Send, Library, AlertTriangle } from "lucide-react"
 import { toast } from "@/components/ui/Toaster"
 import { writeLog, buildDescription } from "@/lib/activitylog"
 import { useAuth } from "@/context/AuthContext"
@@ -82,7 +82,18 @@ const daysSince = (ts: Timestamp): number => {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-const UserRequests = () => {
+interface UserRequestsProps {
+  onRequestDecision?: (
+    userId: string,
+    userName: string,
+    userEmail: string,
+    skillName: string,
+    decision: "approved" | "rejected",
+    adminRemarks?: string,
+  ) => void
+}
+
+const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
   const [requests, setRequests]   = useState<SkillRequest[]>([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
@@ -120,6 +131,116 @@ const UserRequests = () => {
 
   // auth
   const { user } = useAuth()
+
+  // ── GSIN "Add to Library" ────────────────────────────────────────────────
+
+  interface GsinSkill { id: string; skillId: string; name: string }
+
+  const [gsinSkills, setGsinSkills]       = useState<GsinSkill[]>([])
+  const [addToGsinItem, setAddToGsinItem] = useState<SkillRequest | null>(null)
+  const [gsinName, setGsinName]           = useState("")
+  const [gsinSaving, setGsinSaving]       = useState(false)
+  const [gsinError, setGsinError]         = useState("")
+
+  useEffect(() => {
+    getDocs(query(collection(db, "skills"), orderBy("createdAt", "asc")))
+      .then(snap => {
+        setGsinSkills(
+          snap.docs
+            .filter(d => !d.id.startsWith("_"))
+            .map(d => ({ id: d.id, skillId: d.data().skillId as string, name: d.data().name as string }))
+        )
+      })
+      .catch(err => console.error("Failed to load GSIN skills:", err))
+  }, [])
+
+  const similarSkills = useMemo((): GsinSkill[] => {
+    if (!addToGsinItem) return []
+    const q = gsinName.toLowerCase().trim()
+    if (!q) return []
+    const qTokens = q.split(/\s+/).filter(Boolean)
+    return gsinSkills
+      .map(s => {
+        const sn = s.name.toLowerCase()
+        const snTokens = sn.split(/\s+/).filter(Boolean)
+        const contains = sn.includes(q) || q.includes(sn)
+        const overlap  = qTokens.filter(t => snTokens.some(st => st.includes(t) || t.includes(st))).length
+        return { ...s, score: (contains ? 10 : 0) + overlap }
+      })
+      .filter(s => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gsinName, gsinSkills])
+
+  const openAddToGsin = (request: SkillRequest) => {
+    setAddToGsinItem(request)
+    setGsinName(request.skillName || "")
+    setGsinError("")
+  }
+
+  function generateGsinId(): string {
+    const L = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    const l1 = L[Math.floor(Math.random() * 26)]
+    const l2 = L[Math.floor(Math.random() * 26)]
+    return `${l1}${l2}${String(Math.floor(Math.random() * 10_000_000)).padStart(7, "0")}`
+  }
+
+  async function generateUniqueGsinId(): Promise<string> {
+    for (let i = 0; i < 10; i++) {
+      const id = generateGsinId()
+      const snap = await getDocs(query(collection(db, "skills"), where("skillId", "==", id)))
+      if (snap.empty) return id
+    }
+    throw new Error("Could not generate a unique GSIN ID.")
+  }
+
+  const handleAddToGsin = async () => {
+    if (!addToGsinItem) return
+    const trimmed = gsinName.trim()
+    if (!trimmed) { setGsinError("Skill name cannot be empty."); return }
+    const exact = gsinSkills.find(s => s.name.toLowerCase() === trimmed.toLowerCase())
+    if (exact) { setGsinError(`"${exact.name}" already exists in the library (${exact.skillId}).`); return }
+
+    try {
+      setGsinSaving(true)
+      const libraryId   = await generateUniqueGsinId()
+      const newSkillRef = doc(collection(db, "skills"))
+
+      await setDoc(newSkillRef, {
+        skillId:   libraryId,
+        name:      trimmed,
+        createdAt: Timestamp.now(),
+      })
+
+      // Link the skill_request to the newly created skill
+      await updateDoc(doc(db, "skill_requests", addToGsinItem.id), {
+        skillId:   libraryId,
+        updatedAt: serverTimestamp(),
+      })
+
+      writeLog({
+        actorId:    user?.uid ?? "",
+        actorName:  user?.displayName ?? "Unknown",
+        actorEmail: user?.email ?? "",
+        module:     "library",
+        action:     "skill_created",
+        description: `Added "${trimmed}" (${libraryId}) to GSIN library from skill request ${addToGsinItem.skill_req_Id}`,
+        targetId:   newSkillRef.id,
+        targetName: trimmed,
+        meta: { to: { skillId: libraryId, name: trimmed } },
+      })
+
+      toast.success(`"${trimmed}" added to GSIN library and linked to this request.`)
+      setGsinSkills(prev => [...prev, { id: newSkillRef.id, skillId: libraryId, name: trimmed }])
+      setAddToGsinItem(null)
+    } catch (err) {
+      console.error("Failed to add to GSIN:", err)
+      toast.error("Failed to add skill to library.")
+    } finally {
+      setGsinSaving(false)
+    }
+  }
 
   // ── Init ─────────────────────────────────────────────────────────────────
 
@@ -291,6 +412,7 @@ const UserRequests = () => {
         targetName: request.skill_req_Id,
         meta: { other: { skillName: request.skillName, userId: request.userId } },
       })
+      onRequestDecision?.(request.userId, request.userName, request.userEmail, request.skillName, "approved")
     } catch (err) {
       console.error("Approve failed:", err)
       toast.error("Failed to approve request")
@@ -328,6 +450,7 @@ const UserRequests = () => {
         targetName: rejectTarget.skill_req_Id,
         meta: { other: { skillName: rejectTarget.skillName, userId: rejectTarget.userId, reason } },
       })
+      onRequestDecision?.(rejectTarget.userId, rejectTarget.userName, rejectTarget.userEmail, rejectTarget.skillName, "rejected", reason)
       setRejectTarget(null)
       setRejectionReason("")
     } catch (err) {
@@ -547,7 +670,17 @@ const UserRequests = () => {
                   <td>
                     {r.skillId
                       ? <span className="ur-ticket">{r.skillId}</span>
-                      : <span className="ur-badge ur-badge--rejected">not added</span>
+                      : (
+                        <button
+                          className="ur-gsin-add-btn"
+                          onClick={() => openAddToGsin(r)}
+                          title="Add this skill to the GSIN library"
+                        >
+                          <Library size={11} />
+                          Add to GSIN
+                        </button>
+                      )
+                      // : <span style={{ fontSize: 12, color: "var(--red)" }}> Not Added </span>
                     }
                   </td>
                   <td><div className="admin-name">{r.skillName || "—"}</div></td>
@@ -867,6 +1000,85 @@ const UserRequests = () => {
                 </button>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Add to GSIN modal ── */}
+      <Modal
+        open={!!addToGsinItem}
+        onClose={() => { if (!gsinSaving) setAddToGsinItem(null) }}
+        title="Add to GSIN Library"
+        size="sm"
+      >
+        {addToGsinItem && (
+          <div className="ticket-modal">
+            <div className="ticket-modal-section">
+              <span className="ticket-modal-label">Requested by</span>
+              <p className="ticket-modal-subject" style={{ fontSize: 13 }}>
+                {addToGsinItem.userName}
+                <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {addToGsinItem.skillCategory || "—"}</span>
+              </p>
+            </div>
+
+            <hr className="ticket-modal-divider" />
+
+            <div className="ticket-modal-section">
+              <label className="ticket-modal-label" htmlFor="gsin-skill-name">
+                Skill Name
+              </label>
+              <input
+                id="gsin-skill-name"
+                className={`ur-input${gsinError ? " ur-input-err" : ""}`}
+                value={gsinName}
+                onChange={e => { setGsinName(e.target.value); setGsinError("") }}
+                onKeyDown={e => { if (e.key === "Enter") handleAddToGsin() }}
+                placeholder="Skill name"
+                autoFocus
+              />
+              {gsinError
+                ? <span className="ur-gsin-err">{gsinError}</span>
+                : <span className="ur-gsin-hint">A unique GSIN ID will be generated automatically.</span>
+              }
+            </div>
+
+            {similarSkills.length > 0 && (
+              <>
+                <hr className="ticket-modal-divider" />
+                <div className="ticket-modal-section">
+                  <div className="ur-similar-header">
+                    <AlertTriangle size={13} style={{ color: "var(--amber)", flexShrink: 0 }} />
+                    <span className="ticket-modal-label" style={{ color: "var(--amber)" }}>
+                      Similar skills already in library
+                    </span>
+                  </div>
+                  <div className="ur-similar-list">
+                    {similarSkills.map(s => (
+                      <div key={s.id} className="ur-similar-item">
+                        <span className="ur-similar-id">{s.skillId}</span>
+                        <span className="ur-similar-name">{s.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <hr className="ticket-modal-divider" />
+
+            <div className="ticket-modal-actions">
+              <button className="ticket-btn-cancel" onClick={() => setAddToGsinItem(null)} disabled={gsinSaving}>
+                Cancel
+              </button>
+              <button
+                className="ticket-btn-confirm"
+                onClick={handleAddToGsin}
+                disabled={!gsinName.trim() || gsinSaving}
+              >
+                <Library size={13} style={{ marginRight: 6 }} />
+                {gsinSaving ? "Adding…" : "Add to Library"}
+              </button>
+            </div>
           </div>
         )}
       </Modal>

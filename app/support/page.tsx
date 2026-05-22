@@ -2,22 +2,20 @@
 
 import AdminLayout from "@/components/layout/AdminLayout";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
-import { MessageSquare, TicketCheck, Sparkles, ClipboardList } from "lucide-react"; // adjust path as needed
+import { MessageSquare, TicketCheck, Sparkles } from "lucide-react";
 import { useState } from "react";
 import TicketsTab from "./components/tickets";
 import Messages from "./components/messages";
 import AutoReply from "./components/autoReply";
 import CreateTicket from "./components/createTicket";
-import UserRequests from "./components/userRequests";
 
-type TabKey = "messages" | "tickets" | "autoReply" | "createTicket" | "userRequests";
+type TabKey = "messages" | "tickets" | "autoReply" | "createTicket";
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
-  { key: "messages",     label: "Messages",       icon: MessageSquare },
-  { key: "tickets",      label: "Tickets",         icon: TicketCheck },
-  { key: "createTicket", label: "Create Ticket",   icon: TicketCheck },
-  { key: "autoReply",    label: "Auto Reply",       icon: Sparkles },
-  { key: "userRequests", label: "User Requests",   icon: ClipboardList },
+  { key: "messages",     label: "Messages",     icon: MessageSquare },
+  { key: "tickets",      label: "Tickets",      icon: TicketCheck },
+  { key: "createTicket", label: "Create Ticket", icon: TicketCheck },
+  { key: "autoReply",    label: "Auto Reply",   icon: Sparkles },
 ];
 
 export default function SupportPage() {
@@ -62,7 +60,6 @@ export default function SupportPage() {
         {activeTab === "tickets"      && <TicketsTab />}
         {activeTab === "createTicket" && <CreateTicket />}
         {activeTab === "autoReply"    && <AutoReply />}
-        {activeTab === "userRequests" && <UserRequests />}
       </div>
     </AdminLayout>
   );

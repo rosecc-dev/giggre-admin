@@ -307,7 +307,7 @@ export function useContent(actor: ActorInfo) {
         await log({
           module:      "content_management",
           action:      "content_created",
-          description: buildDescription.contentCreated(sectionLabel, title),
+          description: buildDescription.contentCreated(actor.actorName, sectionLabel, title),
           targetSection: sectionKey,
           targetId:    docRef.id,
           targetName:  title,
@@ -322,7 +322,7 @@ export function useContent(actor: ActorInfo) {
         setSubmitting(false);
       }
     },
-    [log],
+    [log, actor],
   );
 
   // ── updateItem ───────────────────────────────────────────────────────────
@@ -385,7 +385,7 @@ export function useContent(actor: ActorInfo) {
         await log({
           module:      "content_management",
           action:      "content_updated",
-          description: buildDescription.contentUpdated(sectionLabel, title),
+          description: buildDescription.contentUpdated(actor.actorName, sectionLabel, title),
           targetSection: sectionKey,
           targetId:    item.id,
           targetName:  title,
@@ -424,7 +424,7 @@ export function useContent(actor: ActorInfo) {
         await log({
           module:      "content_management",
           action:      "content_deleted",
-          description: buildDescription.contentDeleted(sectionLabel, title),
+          description: buildDescription.contentDeleted(actor.actorName, sectionLabel, title),
           targetSection: sectionKey,
           targetId:    item.id,
           targetName:  title,

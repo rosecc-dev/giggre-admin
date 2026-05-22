@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Briefcase, Shield, BarChart2,
   Settings, LogOut, ChevronLeft, ChevronRight, Activity,
-  Map, Library, MegaphoneIcon, File, BadgeCheck,
+  Map, Library, MegaphoneIcon, File, BadgeCheck, GitBranch,
   LucideIcon,
 } from "lucide-react";
 import { auth } from "@/lib/firebase";
@@ -34,10 +34,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/settings",      icon: Settings,        label: "Settings",      module: "settings" },
   { href: "/content-management",      icon: File,        label: "Content Management",      module: "content-management" },
   { href: "/verification",            icon: BadgeCheck,  label: "Verification",            module: "verification" },
+  { href: "/referrals",               icon: GitBranch,   label: "Referrals",               module: "referrals" },
 ];
 
 const LIBRARY_ITEMS: NavItem[] = [
-  { href: "/library-gsin", icon: Library, label: "Skills (GSIN Library)", module: "library-gsin" },
+  { href: "/user-skills", icon: Library, label: "User Skills", module: "library-gsin" },
 ];
 
 const QG_ITEMS: NavItem[] = [
@@ -219,7 +220,7 @@ export default function Sidebar({ collapsed, onToggle, user }: SidebarProps) {
         {visibleLib.length > 0 && (
           <>
             <div className="sb-divider" />
-            {!collapsed && <div className="sb-section-label">Library</div>}
+            {!collapsed && <div className="sb-section-label">Skills</div>}
             {visibleLib.map((item) => (
               <SidebarItem key={item.href} href={item.href} icon={item.icon}
                 label={item.label} collapsed={collapsed} />

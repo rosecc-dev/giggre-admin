@@ -50,7 +50,8 @@ export type QuickGigLogAction = "config_updated";
 export type SkillLogAction =
   | "skill_created"
   | "skill_updated"
-  | "skill_deleted";
+  | "skill_deleted"
+  | "skill_notification_sent";
 
 export type SettingsLogAction = "settings_updated";
 
@@ -159,14 +160,14 @@ export const buildDescription = {
 
   // ── Content management ────────────────────────────────────────────────────
 
-  contentCreated: (sectionLabel: string, itemTitle: string) =>
-    `Created "${itemTitle}" in ${sectionLabel}`,
+  contentCreated: (actorName: string, sectionLabel: string, itemTitle: string) =>
+    `${actorName} created "${itemTitle}" in ${sectionLabel}`,
 
-  contentUpdated: (sectionLabel: string, itemTitle: string) =>
-    `Updated "${itemTitle}" in ${sectionLabel}`,
+  contentUpdated: (actorName: string, sectionLabel: string, itemTitle: string) =>
+    `${actorName} updated "${itemTitle}" in ${sectionLabel}`,
 
-  contentDeleted: (sectionLabel: string, itemTitle: string) =>
-    `Deleted "${itemTitle}" from ${sectionLabel}`,
+  contentDeleted: (actorName: string, sectionLabel: string, itemTitle: string) =>
+    `${actorName} deleted "${itemTitle}" from ${sectionLabel}`,
 
   contentReordered: (sectionLabel: string) =>
     `Reordered items in ${sectionLabel}`,
