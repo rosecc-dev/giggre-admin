@@ -172,7 +172,7 @@ export function useAboutGiggre(actor: ActorInfo) {
           ...actor,
           module: "content_management",
           action: "content_updated",
-          description: buildDescription.contentUpdated("About Giggre", "About Giggre content"),
+          description: buildDescription.contentUpdated(actor.actorName, "About Giggre", "About Giggre content"),
           targetSection: "about_giggre",
           targetId: null,
           targetName: "About Giggre",
