@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useState, useEffect, Fragment, useMemo, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import AdminLayout from "@/components/layout/AdminLayout";
@@ -451,7 +452,7 @@ function LevelBadge({ level }: { level: number }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ReferralsPage() {
+function ReferralsPageInner() {
   const { user, loading: authLoading } = useAuthGuard({ module: "referrals" });
   const router = useRouter();
   const pathname = usePathname();
@@ -949,5 +950,13 @@ export default function ReferralsPage() {
         </div>
       </div>
     </AdminLayout>
+  );
+}
+
+export default function ReferralsPage() {
+  return (
+    <Suspense>
+      <ReferralsPageInner />
+    </Suspense>
   );
 }
