@@ -213,9 +213,10 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         createdAt: Timestamp.now(),
       })
 
-      // Link the skill_request to the newly created skill
+      // Link the skill_request to the newly created skill and sync the name
       await updateDoc(doc(db, "skill_requests", addToGsinItem.id), {
         skillId:   libraryId,
+        skillName: trimmed,
         updatedAt: serverTimestamp(),
       })
 
