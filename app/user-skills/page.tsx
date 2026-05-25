@@ -350,6 +350,16 @@ export default function UserSkillsPage() {
     try {
       await updateDoc(doc(db, "skills", editSkill.id), { name: trimmed });
 
+      // sync skillName on all linked skill_requests
+      const linkedReqs = await getDocs(
+        query(collection(db, "skill_requests"), where("skillId", "==", editSkill.skillId))
+      );
+      await Promise.all(
+        linkedReqs.docs.map((d) =>
+          updateDoc(doc(db, "skill_requests", d.id), { skillName: trimmed, updatedAt: Timestamp.now() })
+        )
+      );
+
       await writeLog({
         actorId:    user!.uid,
         actorName:  user!.displayName ?? "Unknown",

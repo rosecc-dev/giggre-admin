@@ -401,6 +401,15 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         adminRemarks: "",
         updatedAt: serverTimestamp(),
       })
+
+      // add skill to gig worker's skillsXP at level 1 if not already present
+      const workerId = request.gigWorkerId || request.userId
+      if (workerId && request.skillName) {
+        await updateDoc(doc(db, "users", workerId), {
+          [`skillsXP.${request.skillName}`]: 1,
+        })
+      }
+
       toast.success("Request approved")
       writeLog({
         actorId:    user?.uid ?? "",
