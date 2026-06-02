@@ -27,7 +27,7 @@ import {
   ArrowLeft, User, MapPin, Star, Briefcase,
   Clock, Shield, Wrench, Plus, Trash2, ChevronLeft, ChevronRight, CheckCircle,
   Copy, Check, Ban, ShieldOff, ShieldCheck, AlertTriangle, History,
-  GitBranch, BadgeCheck, ExternalLink,
+  GitBranch, BadgeCheck, ExternalLink, FileText,
 } from "lucide-react";
 import { useCurrency } from "@/context/CurrencyContext";
 
@@ -856,6 +856,8 @@ export default function UserProfilePage() {
   const [historyLoading, setHistoryLoading]         = useState(false);
   const [verificationStatus, setVerificationStatus] = useState<"verified" | "pending" | "rejected" | "cancelled" | null>(null);
   const [verifiedAt, setVerifiedAt]                 = useState<Timestamp | null>(null);
+  const [verificationDocs, setVerificationDocs]     = useState<{ category: string; name: string; url: string; uploadedAt: Timestamp | null }[]>([]);
+  const [verificationRejectReason, setVerificationRejectReason] = useState<string | null>(null);
   const [referredUsers, setReferredUsers]           = useState<{ uid: string; name: string; email: string; referral_code_used: string | null; joined_at: Timestamp | null; verified_at: Timestamp | null }[]>([]);
   const [referredUsersLoading, setReferredUsersLoading] = useState(false);
   const [referredUsersPage, setReferredUsersPage]   = useState(1);
@@ -1060,25 +1062,23 @@ export default function UserProfilePage() {
       .finally(() => setReferredUsersLoading(false));
   }, [userId]);
 
-  // ── Fetch verification status ─────────────────────────────────────────────
+  // ── Fetch verification status & documents ────────────────────────────────
   useEffect(() => {
     if (!userId) return;
     getDocs(query(collection(db, "verification_requests"), where("userId", "==", userId)))
       .then((snap) => {
         const verified = snap.docs.find((d) => d.data().status === "verified");
-        if (verified) {
-          const data = verified.data() as Record<string, any>;
-          setVerificationStatus("verified");
-          setVerifiedAt(data.reviewedAt instanceof Timestamp ? data.reviewedAt : null);
-        } else if (!snap.empty) {
-          const latest = snap.docs.sort((a, b) => {
-            const ta = a.data().submittedAt instanceof Timestamp ? a.data().submittedAt.toMillis() : 0;
-            const tb = b.data().submittedAt instanceof Timestamp ? b.data().submittedAt.toMillis() : 0;
-            return tb - ta;
-          })[0];
-          setVerificationStatus(latest.data().status ?? null);
-          setVerifiedAt(null);
-        }
+        const target = verified ?? (snap.empty ? null : snap.docs.sort((a, b) => {
+          const ta = a.data().submittedAt instanceof Timestamp ? a.data().submittedAt.toMillis() : 0;
+          const tb = b.data().submittedAt instanceof Timestamp ? b.data().submittedAt.toMillis() : 0;
+          return tb - ta;
+        })[0]);
+        if (!target) return;
+        const data = target.data() as Record<string, any>;
+        setVerificationStatus(data.status ?? null);
+        setVerifiedAt(data.status === "verified" && data.reviewedAt instanceof Timestamp ? data.reviewedAt : null);
+        setVerificationDocs(Array.isArray(data.documents) ? data.documents : []);
+        setVerificationRejectReason(data.rejectReason ?? null);
       })
       .catch((err) => console.warn("[UserProfile] verification fetch error:", err));
   }, [userId]);
@@ -1585,6 +1585,48 @@ export default function UserProfilePage() {
                 </button>
               }
             />
+          )}
+        </SectionCard>
+
+        {/* Verification Documents */}
+        <SectionCard title="Verification Documents" icon={FileText}>
+          {verificationStatus ? (
+            <div style={{ marginBottom: 12 }}>
+              {verificationStatus === "verified" && <Badge variant="blue"><ShieldCheck size={10} style={{ marginRight: 3 }} />Verified</Badge>}
+              {verificationStatus === "pending"  && <Badge variant="orange" dot>Pending Review</Badge>}
+              {verificationStatus === "rejected" && <Badge variant="red">Rejected</Badge>}
+              {verificationStatus === "cancelled" && <Badge variant="gray">Cancelled</Badge>}
+            </div>
+          ) : null}
+          {verificationRejectReason && (
+            <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid var(--red)", borderRadius: "var(--radius-sm)", padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--red)" }}>
+              <strong>Rejection reason:</strong> {verificationRejectReason}
+            </div>
+          )}
+          {verificationDocs.length === 0 ? (
+            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              {verificationStatus ? "No documents attached." : "No verification submission."}
+            </span>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {verificationDocs.map((d, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 12px" }}>
+                  <FileText size={14} style={{ color: "var(--blue)", flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>
+                      {d.category.replace(/_/g, " ")}
+                      {d.uploadedAt && <> · {d.uploadedAt.toDate().toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</>}
+                    </div>
+                  </div>
+                  {d.url && (
+                    <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--blue)", display: "flex", alignItems: "center", flexShrink: 0 }} title="View document">
+                      <ExternalLink size={13} />
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </SectionCard>
 

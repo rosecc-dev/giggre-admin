@@ -685,3 +685,167 @@
        font-weight: 700;
        cursor: default;
    }
+
+   /* ── Timeline / History ── */
+   .ticket-timeline-wrap {
+       background: var(--bg-elevated);
+       border: 1px solid var(--border);
+       border-radius: 10px;
+       padding: 14px 14px 4px;
+       max-height: 220px;
+       overflow-y: auto;
+   }
+
+   .ticket-timeline {
+       display: flex;
+       flex-direction: column;
+   }
+
+   .ticket-timeline-row {
+       display: flex;
+       gap: 12px;
+   }
+
+   .ticket-timeline-track {
+       display: flex;
+       flex-direction: column;
+       align-items: center;
+       flex-shrink: 0;
+       width: 20px;
+   }
+
+   .ticket-timeline-dot {
+       width: 20px;
+       height: 20px;
+       border-radius: 50%;
+       flex-shrink: 0;
+       z-index: 1;
+   }
+
+   .ticket-timeline-line {
+       width: 1px;
+       flex: 1;
+       min-height: 10px;
+       background: var(--border);
+       margin: 3px 0;
+   }
+
+   .ticket-timeline-content {
+       padding: 0 0 14px;
+       display: flex;
+       flex-direction: column;
+       gap: 2px;
+       flex: 1;
+   }
+
+   .ticket-timeline-action {
+       font-size: 12px;
+       font-weight: 700;
+   }
+
+   .ticket-timeline-actor {
+       font-size: 12px;
+       color: var(--text-primary);
+   }
+
+   .ticket-timeline-date {
+       font-size: 11px;
+       color: var(--text-muted);
+   }
+
+   .ticket-timeline-note-text {
+       font-size: 12px;
+       color: var(--text-secondary);
+       background: var(--bg-surface);
+       border: 1px solid var(--border);
+       border-radius: var(--radius-sm);
+       padding: 8px 10px;
+       margin-top: 4px;
+       line-height: 1.5;
+   }
+
+   .ticket-timeline-empty {
+       font-size: 13px;
+       color: var(--text-muted);
+       padding: 4px 0 14px;
+   }
+
+   /* ── Note box ── */
+   .ticket-note-box {
+       display: flex;
+       flex-direction: column;
+       gap: 8px;
+   }
+
+   .ticket-note-textarea {
+       width: 100%;
+       border: 1px solid var(--border);
+       background: var(--bg-elevated);
+       border-radius: var(--radius-sm);
+       padding: 10px 12px;
+       font-size: 13px;
+       color: var(--text-primary);
+       resize: vertical;
+       min-height: 60px;
+       outline: none;
+       font-family: inherit;
+       box-sizing: border-box;
+   }
+
+   .ticket-note-textarea:focus {
+       border-color: var(--blue);
+   }
+
+   .ticket-note-submit {
+       display: flex;
+       align-items: center;
+       gap: 6px;
+       padding: 7px 14px;
+       border-radius: var(--radius-sm);
+       background: var(--blue);
+       color: white;
+       border: none;
+       cursor: pointer;
+       font-size: 13px;
+       font-weight: 600;
+       align-self: flex-end;
+       transition: opacity 0.15s;
+   }
+
+   .ticket-note-submit:disabled {
+       opacity: 0.5;
+       cursor: not-allowed;
+   }
+
+   .ticket-note-submit:not(:disabled):hover {
+       opacity: 0.88;
+   }
+
+   /* ── Note box locked state ── */
+   .ticket-note-box--locked {
+       background: var(--bg-elevated);
+       border: 1px solid var(--border);
+       border-radius: var(--radius-sm);
+       padding: 12px 14px;
+   }
+
+   .ticket-note-locked-msg {
+       font-size: 13px;
+       color: var(--text-muted);
+       margin: 0;
+       text-align: center;
+   }
+
+   /* ── Resolved banner ── */
+   .ticket-resolved-banner {
+       display: flex;
+       align-items: center;
+       flex-wrap: wrap;
+       gap: 4px;
+       background: color-mix(in srgb, var(--green) 10%, transparent);
+       border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
+       border-radius: var(--radius-sm);
+       padding: 9px 13px;
+       font-size: 13px;
+       color: var(--green);
+   }

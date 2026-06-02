@@ -64,8 +64,13 @@ interface GigBase {
   createdAt: Timestamp | null;
   applications: Application[];
   cancelledByAdmin?: boolean;
+  cancelledByAdminId?: string;
+  cancelledByAdminName?: string;
   cancellationReason?: string;
   cancellationTicketID?: string;
+  cancellationRequestedAt?: Timestamp | null;
+  cancelledAt?: Timestamp | null;
+  cancellation_reason?: Array<{ approved: boolean | null; reason: string; requestedBy: string }>;
 }
 
 type Gig = GigBase & Record<string, unknown>;
@@ -73,6 +78,7 @@ type Gig = GigBase & Record<string, unknown>;
 type StatusFilter = "all" | "completed" | "in_progress" | "cancelled" | "inactive" | "expired";
 type GigTypeFilter = "all" | GigType;
 type SortOption = "newest" | "oldest" | "pay-high" | "pay-low";
+type ActiveTab = "cancellation_requests" | "all_gigs";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +149,7 @@ function statusBadgeClass(status: string): string {
   if (s === "cancelled") return "lg-badge--cancelled";
   if (s === "no_worker") return "lg-badge--inactive";
   if (s === "expired") return "lg-badge--expired";
+  if (s === "cancellation_requested") return "lg-badge--cancel-req";
   return "lg-badge--unavailable";
 }
 
@@ -150,6 +157,7 @@ function statusLabel(status: string): string {
   const s = status?.toLowerCase();
   if (s === "available") return "Available";
   if (s === "no_worker") return "No Worker";
+  if (s === "cancellation_requested") return "Cancel Requested";
   if (!s) return "Unknown";
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -161,7 +169,9 @@ export default function LiveGigsPage() {
   const { user } = useAuth();
   const { symbol } = useCurrency();
 
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 20;
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>("cancellation_requests");
 
   const [gigs, setGigs] = useState<Gig[]>([]);
   const [loading, setLoading] = useState(false);
@@ -185,6 +195,14 @@ export default function LiveGigsPage() {
   const [bulkCancelTicketID, setBulkCancelTicketID] = useState("N/A");
   const [bulkCancelling, setBulkCancelling] = useState(false);
   const [bulkCancelError, setBulkCancelError] = useState<string | null>(null);
+
+  // ── Cancellation Requests tab bulk selection ──
+  const [crSelectedIds, setCrSelectedIds] = useState<Set<string>>(new Set());
+  const [crBulkOpen, setCrBulkOpen] = useState(false);
+  const [crBulkReason, setCrBulkReason] = useState("");
+  const [crBulkTicketID, setCrBulkTicketID] = useState("N/A");
+  const [crBulkCancelling, setCrBulkCancelling] = useState(false);
+  const [crBulkError, setCrBulkError] = useState<string | null>(null);
 
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -226,12 +244,17 @@ export default function LiveGigsPage() {
     if (bulkCancelling || cancellableSelected.length === 0) return;
     setBulkCancelling(true);
     setBulkCancelError(null);
+    const adminId   = user!.uid;
+    const adminName = user!.displayName ?? "Unknown";
+    const adminEmail = user!.email ?? "";
     try {
       await Promise.all(
         cancellableSelected.map((gig) =>
           updateDoc(doc(db, GIG_COLLECTIONS[gig.gigType], gig.id), {
             status: "cancelled",
             cancelledByAdmin: true,
+            cancelledByAdminId: adminId,
+            cancelledByAdminName: adminName,
             cancellationReason: bulkCancelReason.trim() || null,
             cancellationTicketID: bulkCancelTicketID.trim() || "N/A",
           })
@@ -246,35 +269,37 @@ export default function LiveGigsPage() {
                 ...g,
                 status: "cancelled",
                 cancelledByAdmin: true,
+                cancelledByAdminId: adminId,
+                cancelledByAdminName: adminName,
                 cancellationReason: bulkCancelReason.trim() || undefined,
                 cancellationTicketID: bulkCancelTicketID.trim() || "N/A",
               }
             : g
         )
       );
-      await Promise.all(
-        cancellableSelected.map((gig) =>
-          writeLog({
-            actorId: user!.uid,
-            actorName: user!.displayName ?? "Unknown",
-            actorEmail: user!.email ?? "",
-            module: "gig_management",
-            action: "gig_cancelled",
-            description: buildDescription.gigCancelled(gig.title || "Untitled Gig", gig.gigType),
-            targetId: gig.id,
-            targetName: gig.title || "Untitled Gig",
-            meta: {
-              other: {
-                gigType: gig.gigType,
-                collection: GIG_COLLECTIONS[gig.gigType],
-                cancellationReason: bulkCancelReason.trim() || null,
-                cancellationTicketID: bulkCancelTicketID.trim() || "N/A",
-                bulkCancel: true,
-              },
-            },
-          })
-        )
-      );
+      await writeLog({
+        actorId: adminId,
+        actorName: adminName,
+        actorEmail: adminEmail,
+        module: "gig_management",
+        action: "gig_bulk_cancelled",
+        description: buildDescription.gigBulkCancelled(adminName, cancellableSelected.length),
+        meta: {
+          other: {
+            totalCancelled: cancellableSelected.length,
+            cancellationReason: bulkCancelReason.trim() || null,
+            cancellationTicketID: bulkCancelTicketID.trim() || "N/A",
+            cancelledByAdminId: adminId,
+            cancelledByAdminName: adminName,
+            gigs: cancellableSelected.map((g) => ({
+              id: g.id,
+              title: g.title || "Untitled Gig",
+              gigType: g.gigType,
+              collection: GIG_COLLECTIONS[g.gigType],
+            })),
+          },
+        },
+      });
       setSelectionMode(false);
       setSelectedIds(new Set());
       setBulkCancelOpen(false);
@@ -291,36 +316,32 @@ export default function LiveGigsPage() {
     if (!gig || cancellingId) return;
     setCancellingId(gig.id);
     setCancelError(null);
+    const adminId   = user!.uid;
+    const adminName = user!.displayName ?? "Unknown";
     try {
       await updateDoc(doc(db, GIG_COLLECTIONS[gig.gigType], gig.id), {
         status: "cancelled",
         cancelledByAdmin: true,
+        cancelledByAdminId: adminId,
+        cancelledByAdminName: adminName,
         cancellationReason: cancelReason.trim() || null,
         cancellationTicketID: cancelTicketID.trim() || null,
       });
-      setGigs((prev) =>
-        prev.map((g) =>
-          g.id === gig.id
-            ? {
-                ...g,
-                status: "cancelled",
-                cancelledByAdmin: true,
-                cancellationReason: cancelReason.trim() || undefined,
-                cancellationTicketID: cancelTicketID.trim() || undefined,
-              }
-            : g
-        )
-      );
+      const localUpdate = {
+        status: "cancelled",
+        cancelledByAdmin: true,
+        cancelledByAdminId: adminId,
+        cancelledByAdminName: adminName,
+        cancellationReason: cancelReason.trim() || undefined,
+        cancellationTicketID: cancelTicketID.trim() || undefined,
+      };
+      setGigs((prev) => prev.map((g) => g.id === gig.id ? { ...g, ...localUpdate } : g));
       if (detailGig?.id === gig.id) {
-        setDetailGig((prev) =>
-          prev ? { ...prev, status: "cancelled", cancelledByAdmin: true,
-            cancellationReason: cancelReason.trim() || undefined,
-            cancellationTicketID: cancelTicketID.trim() || undefined } : prev
-        );
+        setDetailGig((prev) => prev ? { ...prev, ...localUpdate } : prev);
       }
       await writeLog({
-        actorId: user!.uid,
-        actorName: user!.displayName ?? "Unknown",
+        actorId: adminId,
+        actorName: adminName,
         actorEmail: user!.email ?? "",
         module: "gig_management",
         action: "gig_cancelled",
@@ -331,6 +352,8 @@ export default function LiveGigsPage() {
           other: {
             gigType: gig.gigType,
             collection: GIG_COLLECTIONS[gig.gigType],
+            cancelledByAdminId: adminId,
+            cancelledByAdminName: adminName,
             cancellationReason: cancelReason.trim() || null,
             cancellationTicketID: cancelTicketID.trim() || null,
           },
@@ -449,6 +472,83 @@ export default function LiveGigsPage() {
     return list;
   }, [gigs, search, statusFilter, gigTypeFilter, sort, inactiveDays, postedByFilter, dateFrom, dateTo]);
 
+  const cancellationRequests = useMemo(
+    () => gigs
+      .filter((g) => g.status?.toLowerCase() === "cancellation_requested")
+      .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0)),
+    [gigs]
+  );
+
+  const crBulkApprove = useCallback(async () => {
+    const targets = cancellationRequests.filter((g) => crSelectedIds.has(g.id));
+    if (crBulkCancelling || targets.length === 0) return;
+    setCrBulkCancelling(true);
+    setCrBulkError(null);
+    const adminId    = user!.uid;
+    const adminName  = user!.displayName ?? "Unknown";
+    const adminEmail = user!.email ?? "";
+    try {
+      await Promise.all(
+        targets.map((gig) =>
+          updateDoc(doc(db, GIG_COLLECTIONS[gig.gigType], gig.id), {
+            status: "cancelled",
+            cancelledByAdmin: true,
+            cancelledByAdminId: adminId,
+            cancelledByAdminName: adminName,
+            cancellationReason: crBulkReason.trim() || null,
+            cancellationTicketID: crBulkTicketID.trim() || "N/A",
+          })
+        )
+      );
+      setGigs((prev) =>
+        prev.map((g) =>
+          crSelectedIds.has(g.id)
+            ? {
+                ...g,
+                status: "cancelled",
+                cancelledByAdmin: true,
+                cancelledByAdminId: adminId,
+                cancelledByAdminName: adminName,
+                cancellationReason: crBulkReason.trim() || undefined,
+                cancellationTicketID: crBulkTicketID.trim() || "N/A",
+              }
+            : g
+        )
+      );
+      await writeLog({
+        actorId: adminId,
+        actorName: adminName,
+        actorEmail: adminEmail,
+        module: "gig_management",
+        action: "gig_bulk_cancelled",
+        description: buildDescription.gigBulkCancelled(adminName, targets.length),
+        meta: {
+          other: {
+            totalCancelled: targets.length,
+            source: "cancellation_requests_tab",
+            cancellationReason: crBulkReason.trim() || null,
+            cancellationTicketID: crBulkTicketID.trim() || "N/A",
+            cancelledByAdminId: adminId,
+            cancelledByAdminName: adminName,
+            gigs: targets.map((g) => ({
+              id: g.id,
+              title: g.title || "Untitled Gig",
+              gigType: g.gigType,
+              collection: GIG_COLLECTIONS[g.gigType],
+            })),
+          },
+        },
+      });
+      setCrSelectedIds(new Set());
+      setCrBulkOpen(false);
+    } catch (err) {
+      console.error("CR bulk approve failed:", err);
+      setCrBulkError("Some gigs could not be cancelled. Please try again.");
+    } finally {
+      setCrBulkCancelling(false);
+    }
+  }, [crBulkCancelling, cancellationRequests, crSelectedIds, crBulkReason, crBulkTicketID, user]);
+
   const stats = useMemo(() => {
     const total = gigs.length;
     const completed = gigs.filter((g) => g.status?.toLowerCase() === "completed").length;
@@ -457,7 +557,7 @@ export default function LiveGigsPage() {
     const expired = gigs.filter((g) => g.status?.toLowerCase() === "expired").length;
     const inProgress = gigs.filter((g) => {
       const s = g.status?.toLowerCase();
-      return s !== "completed" && s !== "no_worker" && s !== "expired" && s !== "cancelled";
+      return s !== "completed" && s !== "no_worker" && s !== "expired" && s !== "cancelled" && s !== "cancellation_requested";
     }).length;
     return { total, completed, inProgress: Math.max(0, inProgress), noWorker, cancelled, expired };
   }, [gigs]);
@@ -525,6 +625,42 @@ export default function LiveGigsPage() {
       <style>{`
         /* ── Layout ── */
         .lg-wrap { display: flex; flex-direction: column; gap: 20px; padding: 24px; }
+
+        /* ── Tabs ── */
+        .lg-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+        .lg-tab {
+          padding: 10px 18px; font-size: 13px; font-weight: 600; font-family: inherit;
+          background: none; border: none; border-bottom: 2px solid transparent;
+          color: var(--text-muted); cursor: pointer; transition: color 0.15s, border-color 0.15s;
+          display: flex; align-items: center; gap: 7px; white-space: nowrap; margin-bottom: -1px;
+        }
+        .lg-tab:hover { color: var(--text-primary); }
+        .lg-tab--active { color: var(--blue); border-bottom-color: var(--blue); }
+        .lg-tab-badge {
+          background: var(--blue); color: white; border-radius: 10px;
+          font-size: 10px; font-weight: 700; padding: 1px 6px; min-width: 16px; text-align: center;
+        }
+        .lg-tab-badge--red { background: var(--red); }
+
+        /* ── Cancellation request table ── */
+        .lg-cr-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+        .lg-cr-reason { font-size: 12px; color: var(--text-secondary); margin-top: 2px; font-style: italic; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .lg-approve-btn {
+          padding: 4px 10px; border-radius: var(--radius-sm);
+          border: 1px solid rgba(239,68,68,0.35); background: rgba(239,68,68,0.08);
+          color: var(--red); font-size: 11px; font-weight: 600; font-family: inherit;
+          cursor: pointer; transition: all 0.12s; white-space: nowrap;
+        }
+        .lg-approve-btn:hover:not(:disabled) { background: rgba(239,68,68,0.18); border-color: var(--red); }
+        .lg-approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .lg-reject-btn {
+          padding: 4px 10px; border-radius: var(--radius-sm);
+          border: 1px solid var(--border); background: transparent;
+          color: var(--text-secondary); font-size: 11px; font-weight: 600; font-family: inherit;
+          cursor: pointer; transition: all 0.12s; white-space: nowrap;
+        }
+        .lg-reject-btn:hover:not(:disabled) { border-color: var(--text-muted); color: var(--text-primary); }
+        .lg-reject-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* ── Stats ── */
         .lg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
@@ -712,7 +848,15 @@ export default function LiveGigsPage() {
         .lg-badge--type-offered { background: rgba(245,158,11,0.12); color: var(--amber); }
         .lg-badge--type-open { background: rgba(59,130,246,0.12); color: var(--blue); }
         .lg-badge--type-quick { background: rgba(139,92,246,0.12); color: var(--purple); }
+        .lg-badge--cancel-req { background: rgba(239,68,68,0.12); color: var(--red); }
         .lg-badge-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+        /* ── Cancellation request info box ── */
+        .gd-cancel-req-info { padding: 10px 14px; background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.2); border-radius: var(--radius-sm); margin-bottom: 20px; }
+        .gd-cancel-req-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--red); margin-bottom: 8px; }
+        .gd-cancel-req-row { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+        .gd-cancel-req-row:last-child { margin-bottom: 0; }
+        .gd-cancel-req-key { font-weight: 700; color: var(--text-muted); }
 
         /* ── Row actions ── */
         .lg-actions { display: flex; align-items: center; gap: 6px; }
@@ -749,7 +893,7 @@ export default function LiveGigsPage() {
 
         /* ── Pagination ── */
         .lg-pagination {
-          display: flex; align-items: center; justify-content: space-between;
+          display: flex; align-items: center; justify-content: end;
           padding: 12px 20px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 10px;
         }
         .lg-page-info { font-size: 12px; color: var(--text-muted); }
@@ -815,6 +959,42 @@ export default function LiveGigsPage() {
             </button>
           </div>
         )}
+
+        {/* ── Tabs ── */}
+        <div className="lg-tabs">
+          <button
+            className={`lg-tab${activeTab === "cancellation_requests" ? " lg-tab--active" : ""}`}
+            onClick={() => { setActiveTab("cancellation_requests"); setCrSelectedIds(new Set()); }}
+          >
+            Requested Cancellation
+            {cancellationRequests.length > 0 && (
+              <span className="lg-tab-badge lg-tab-badge--red">{cancellationRequests.length}</span>
+            )}
+          </button>
+          <button
+            className={`lg-tab${activeTab === "all_gigs" ? " lg-tab--active" : ""}`}
+            onClick={() => { setActiveTab("all_gigs"); setCrSelectedIds(new Set()); }}
+          >
+            All Gigs
+            <span className="lg-tab-badge">{gigs.length}</span>
+          </button>
+        </div>
+
+        {activeTab === "cancellation_requests" ? (
+          <CancellationRequestsTab
+            gigs={cancellationRequests}
+            loading={loading}
+            symbol={symbol}
+            cancellingId={cancellingId}
+            selectedIds={crSelectedIds}
+            onSelectChange={setCrSelectedIds}
+            onBulkApprove={() => { setCrBulkReason(""); setCrBulkTicketID("N/A"); setCrBulkError(null); setCrBulkOpen(true); }}
+            onApprove={openCancelModal}
+            onReject={(gig) => setDetailGig(gig)}
+            onRowClick={(gig) => setDetailGig(gig)}
+          />
+        ) : (
+        <>
 
         {/* ── Stats bar ── */}
         <div className="lg-stats">
@@ -1223,6 +1403,9 @@ export default function LiveGigsPage() {
             </div>
           )}
         </div>
+
+        </>
+        )}
       </div>
 
       {/* ── Gig Detail Modal ── */}
@@ -1264,6 +1447,37 @@ export default function LiveGigsPage() {
             <textarea className="cgm-input cgm-textarea" placeholder="Describe why these gigs are being cancelled…" value={bulkCancelReason} onChange={(e) => setBulkCancelReason(e.target.value)} disabled={bulkCancelling} />
           </div>
           {bulkCancelError && <div className="cgm-error">{bulkCancelError}</div>}
+        </Modal>
+      )}
+
+      {/* ── CR Bulk Approve Modal ── */}
+      {crBulkOpen && (
+        <Modal
+          open
+          onClose={() => { if (!crBulkCancelling) { setCrBulkOpen(false); setCrBulkError(null); } }}
+          title={`Approve ${crSelectedIds.size} Cancellation Request${crSelectedIds.size !== 1 ? "s" : ""}`}
+          description={`This will cancel ${crSelectedIds.size} gig${crSelectedIds.size !== 1 ? "s" : ""} and cannot be undone.`}
+          size="sm"
+          footer={
+            <>
+              <Button variant="ghost" size="sm" onClick={() => { setCrBulkOpen(false); setCrBulkError(null); }} disabled={crBulkCancelling}>
+                Dismiss
+              </Button>
+              <Button variant="danger" size="sm" loading={crBulkCancelling} onClick={crBulkApprove}>
+                Confirm Approve All
+              </Button>
+            </>
+          }
+        >
+          <div className="cgm-field">
+            <label className="cgm-label">Ticket ID</label>
+            <input className="cgm-input" placeholder="N/A" value={crBulkTicketID} onChange={(e) => setCrBulkTicketID(e.target.value)} disabled={crBulkCancelling} />
+          </div>
+          <div className="cgm-field" style={{ marginBottom: 0 }}>
+            <label className="cgm-label">Cancellation Reason</label>
+            <textarea className="cgm-input cgm-textarea" placeholder="Describe why these gigs are being cancelled…" value={crBulkReason} onChange={(e) => setCrBulkReason(e.target.value)} disabled={crBulkCancelling} />
+          </div>
+          {crBulkError && <div className="cgm-error">{crBulkError}</div>}
         </Modal>
       )}
 
@@ -1347,6 +1561,213 @@ export default function LiveGigsPage() {
   );
 }
 
+// ─── Cancellation Requests Tab ───────────────────────────────────────────────
+
+function CancellationRequestsTab({
+  gigs, loading, symbol, cancellingId, selectedIds, onSelectChange, onBulkApprove, onApprove, onReject, onRowClick,
+}: {
+  gigs: Gig[];
+  loading: boolean;
+  symbol: string;
+  cancellingId: string | null;
+  selectedIds: Set<string>;
+  onSelectChange: (ids: Set<string>) => void;
+  onBulkApprove: () => void;
+  onApprove: (gig: Gig) => void;
+  onReject: (gig: Gig) => void;
+  onRowClick: (gig: Gig) => void;
+}) {
+  const CR_PAGE_SIZE = 20;
+  const [crPage, setCrPage] = useState(1);
+
+  useEffect(() => { setCrPage(1); }, [gigs.length]);
+
+  const crTotalPages = Math.max(1, Math.ceil(gigs.length / CR_PAGE_SIZE));
+  const paginatedGigs = gigs.slice((crPage - 1) * CR_PAGE_SIZE, crPage * CR_PAGE_SIZE);
+
+  const allSelected = paginatedGigs.length > 0 && paginatedGigs.every((g) => selectedIds.has(g.id));
+
+  const toggleAll = () => {
+    const next = new Set(selectedIds);
+    if (allSelected) {
+      paginatedGigs.forEach((g) => next.delete(g.id));
+    } else {
+      paginatedGigs.forEach((g) => next.add(g.id));
+    }
+    onSelectChange(next);
+  };
+
+  const toggleOne = (id: string) => {
+    const next = new Set(selectedIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onSelectChange(next);
+  };
+  if (loading) return (
+    <div className="lg-cr-card"><LoadingSkeleton /></div>
+  );
+
+  if (gigs.length === 0) return (
+    <div className="lg-cr-card">
+      <div className="lg-empty">
+        <div className="lg-empty-icon"><Briefcase size={36} /></div>
+        <div className="lg-empty-title">No cancellation requests</div>
+        <div className="lg-empty-sub">Gigs with a pending cancellation request will appear here.</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="lg-cr-card">
+      <div className="lg-card-header">
+        <span className="lg-card-title">Requested Cancellations</span>
+        <span className="lg-card-count">{gigs.length} request{gigs.length !== 1 ? "s" : ""}</span>
+      </div>
+      {crTotalPages > 1 && (
+        <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "6px 16px 0" }}>
+          Showing {(crPage - 1) * CR_PAGE_SIZE + 1}–{Math.min(crPage * CR_PAGE_SIZE, gigs.length)} of {gigs.length}
+        </div>
+      )}
+
+      {selectedIds.size > 0 && (
+        <div className="lg-bulk-bar" style={{ margin: "0 0 0 0", borderRadius: 0, borderLeft: "none", borderRight: "none" }}>
+          <span style={{ fontWeight: 600 }}>{selectedIds.size} selected</span>
+          <button className="lg-approve-btn" onClick={onBulkApprove}>
+            Approve {selectedIds.size} Cancellation{selectedIds.size !== 1 ? "s" : ""}
+          </button>
+          <button className="lg-bulk-clear-btn" onClick={() => onSelectChange(new Set())}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      <table className="lg-table">
+        <thead>
+          <tr>
+            <th style={{ width: 36 }}>
+              <input type="checkbox" className="lg-checkbox" checked={allSelected} onChange={toggleAll} title="Select all" />
+            </th>
+            <th>Gig ID</th>
+            <th>Gig</th>
+            <th>Host</th>
+            <th>Type</th>
+            <th>Requested By</th>
+            <th>Reason</th>
+            <th>Requested</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedGigs.map((gig) => (
+            <tr key={gig.id} className="lg-row" onClick={() => onRowClick(gig)}>
+              <td onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  className="lg-checkbox"
+                  checked={selectedIds.has(gig.id)}
+                  onChange={() => toggleOne(gig.id)}
+                />
+              </td>
+              <td onClick={(e) => e.stopPropagation()}>
+                <CopyableId id={gig.id} />
+              </td>
+              <td>
+                <div className="lg-gig-title">{gig.title || "Untitled Gig"}</div>
+                {gig.salary !== undefined && gig.salary !== null && gig.salary !== "" && (
+                  <div className="lg-gig-meta">{symbol}{gig.salary}</div>
+                )}
+              </td>
+              <td>
+                <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
+                  {(gig.hostName as string) || "—"}
+                </span>
+              </td>
+              <td>
+                <span className={`lg-badge lg-badge--type-${gig.gigType}`}>
+                  {GIG_TYPE_LABELS[gig.gigType]}
+                </span>
+              </td>
+              <td>
+                {(() => {
+                  const requestedBy = gig.cancellation_reason?.[0]?.requestedBy;
+                  return requestedBy ? (
+                    <span style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500, textTransform: "capitalize" }}>
+                      {requestedBy}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>—</span>
+                  );
+                })()}
+              </td>
+              <td>
+                {(() => {
+                  const reason = gig.cancellation_reason?.[0]?.reason;
+                  return reason ? (
+                    <div className="lg-cr-reason" title={reason}>{reason}</div>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>—</span>
+                  );
+                })()}
+              </td>
+              <td>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {formatDateShort(gig.cancellationRequestedAt ?? gig.createdAt)}
+                </span>
+              </td>
+              <td onClick={(e) => e.stopPropagation()}>
+                <div className="lg-actions">
+                  <button
+                    className="lg-approve-btn"
+                    disabled={cancellingId === gig.id}
+                    onClick={() => onApprove(gig)}
+                    title="Approve cancellation"
+                  >
+                    {cancellingId === gig.id ? "…" : "Approve"}
+                  </button>
+                  <button
+                    className="lg-reject-btn"
+                    disabled={cancellingId === gig.id}
+                    onClick={() => onReject(gig)}
+                    title="View & reject"
+                  >
+                    View
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {(
+        <div className="lg-pagination">
+          <div className="lg-page-controls">
+            <button className="lg-page-btn" onClick={() => setCrPage(1)} disabled={crPage === 1} title="First">«</button>
+            <button className="lg-page-btn" onClick={() => setCrPage((p) => p - 1)} disabled={crPage === 1} title="Prev">‹</button>
+            {Array.from({ length: crTotalPages }, (_, i) => i + 1)
+              .filter((p) => p === 1 || p === crTotalPages || Math.abs(p - crPage) <= 1)
+              .reduce<(number | string)[]>((acc, p, i, arr) => {
+                if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                acc.push(p);
+                return acc;
+              }, [])
+              .map((p, i) =>
+                typeof p === "string"
+                  ? <span key={`e-${i}`} className="lg-page-ellipsis">…</span>
+                  : <button
+                      key={p}
+                      className={`lg-page-btn${crPage === p ? " lg-page-btn--active" : ""}`}
+                      onClick={() => setCrPage(p as number)}
+                    >{p}</button>
+              )}
+            <button className="lg-page-btn" onClick={() => setCrPage((p) => p + 1)} disabled={crPage === crTotalPages} title="Next">›</button>
+            <button className="lg-page-btn" onClick={() => setCrPage(crTotalPages)} disabled={crPage === crTotalPages} title="Last">»</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 
 const StatCard = memo(function StatCard({
@@ -1393,10 +1814,12 @@ function GigDetailModal({
   const pending  = gig.applications?.filter((a) => a.status === "pending").length ?? 0;
   const rejected = gig.applications?.filter((a) => a.status === "rejected").length ?? 0;
 
+  const isCancelRequested = gig.status?.toLowerCase() === "cancellation_requested";
+
   const extraFields = Object.entries(gig).filter(
     ([key, val]) =>
       !BASE_FIELDS.has(key) &&
-      !["cancelledByAdmin", "cancellationReason", "cancellationTicketID"].includes(key) &&
+      !["cancelledByAdmin", "cancelledByAdminId", "cancelledByAdminName", "cancellationReason", "cancellationTicketID", "cancellationRequestedAt", "cancelledAt", "cancellation_reason"].includes(key) &&
       val !== null && val !== undefined && val !== "" && !Array.isArray(val)
   );
 
@@ -1447,11 +1870,38 @@ function GigDetailModal({
         </div>
       </div>
 
-      {/* Cancellation info */}
-      {isCancelled && gig.cancelledByAdmin && (
+      {/* Cancellation request info */}
+      {(isCancelRequested || (isCancelled && gig.cancellation_reason?.[0])) && (() => {
+        const req = gig.cancellation_reason?.[0];
+        return (
+          <div className="gd-cancel-req-info">
+            <div className="gd-cancel-req-title">Cancellation Request Info</div>
+            {req?.requestedBy && (
+              <div className="gd-cancel-req-row">
+                <span className="gd-cancel-req-key">Requested by: </span>
+                <span style={{ textTransform: "capitalize" }}>{req.requestedBy}</span>
+              </div>
+            )}
+            {req?.reason && (
+              <div className="gd-cancel-req-row">
+                <span className="gd-cancel-req-key">Reason: </span>{req.reason}
+              </div>
+            )}
+            {gig.cancellationRequestedAt && (
+              <div className="gd-cancel-req-row">
+                <span className="gd-cancel-req-key">Requested at: </span>{formatDate(gig.cancellationRequestedAt)}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Cancellation info (admin-cancelled) */}
+      {isCancelled && (gig.cancelledByAdmin || gig.cancelledByAdminName || gig.cancelledByAdminId) && (
         <div className="gd-cancel-info" style={{ marginBottom: 20 }}>
           <div className="gd-cancel-info-row">
-            <span className="gd-cancel-info-key">Cancelled by: </span>Admin
+            <span className="gd-cancel-info-key">Cancelled by admin: </span>
+            {gig.cancelledByAdminName ?? "Admin"}
           </div>
           {gig.cancellationTicketID && (
             <div className="gd-cancel-info-row">
@@ -1461,6 +1911,11 @@ function GigDetailModal({
           {gig.cancellationReason && (
             <div className="gd-cancel-info-row">
               <span className="gd-cancel-info-key">Reason: </span>{gig.cancellationReason}
+            </div>
+          )}
+          {gig.cancelledAt && (
+            <div className="gd-cancel-info-row">
+              <span className="gd-cancel-info-key">Cancelled at: </span>{formatDate(gig.cancelledAt)}
             </div>
           )}
         </div>

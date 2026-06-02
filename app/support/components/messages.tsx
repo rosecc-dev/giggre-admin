@@ -576,31 +576,37 @@ const Messages = () => {
             </div>
 
             {/* ── Input bar ── */}
-            <div className="messages-input-bar">
-              <input
-                type="text"
-                className="messages-input"
-                placeholder="Type a message..."
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={sending}
-              />
-              <button
-                className="messages-send-btn"
-                onClick={sendMessage}
-                disabled={!message.trim() || sending}
-              >
-                {sending ? (
-                  <span className="messages-send-spinner" />
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                )}
-              </button>
-            </div>
+            {selectedRoom.status === 'resolved' ? (
+              <div className="messages-input-bar messages-input-bar--locked">
+                <p className="messages-input-locked-msg">This conversation is resolved. No further messages can be sent.</p>
+              </div>
+            ) : (
+              <div className="messages-input-bar">
+                <input
+                  type="text"
+                  className="messages-input"
+                  placeholder="Type a message..."
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={sending}
+                />
+                <button
+                  className="messages-send-btn"
+                  onClick={sendMessage}
+                  disabled={!message.trim() || sending}
+                >
+                  {sending ? (
+                    <span className="messages-send-spinner" />
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            )}
           </>
         ) : (
           <div className="messages-empty-state">

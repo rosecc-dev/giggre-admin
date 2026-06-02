@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useState, useMemo } from "react"
-import { getCountFromServer, collection, getDocs, orderBy, query, Timestamp, where, doc, updateDoc } from "firebase/firestore"
+import { useEffect, useState, useMemo, useCallback, useRef } from "react"
+import { getCountFromServer, collection, getDocs, orderBy, query, Timestamp, where, doc, updateDoc, serverTimestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
+import { useAuth } from "@/context/AuthContext"
 import "./ticketStyle.css"
 import Modal from "@/components/ui/Modal"
-import { Eye, RefreshCw, Search, X } from "lucide-react"
+import { Eye, RefreshCw, Search, X, FileText, Send } from "lucide-react"
 import { toast } from "@/components/ui/Toaster"
+import { writeLog, buildDescription } from "@/lib/activitylog"
 
 type TicketStatus = 'open' | 'in progress' | 'resolved'
 
@@ -22,6 +24,8 @@ interface SupportTicket {
   status: TicketStatus
   createdAt: Timestamp
   userId: string
+  resolvedBy?: string | null
+  resolvedAt?: Timestamp | null
   [key: string]: unknown
 }
 
@@ -32,9 +36,25 @@ interface TicketCounts {
   resolved: number
 }
 
+interface TimelineEntry {
+  action: string
+  actorName: string
+  date: Date | null
+  description?: string
+  fromStatus?: string
+  toStatus?: string
+}
+
 const STATUS_OPTIONS: TicketStatus[] = ['open', 'in progress', 'resolved']
 
+const TIMELINE_CONFIG: Record<string, { label: string; color: string; glow: string }> = {
+  ticket_status_updated: { label: "Status Updated", color: "var(--blue)", glow: "rgba(59,130,246,0.18)" },
+  ticket_note:           { label: "Note Added",     color: "var(--text-secondary)", glow: "rgba(100,116,139,0.18)" },
+}
+
 const TicketsTab = () => {
+  const { user } = useAuth()
+
   const [tickets, setTickets] = useState<SupportTicket[]>([])
   const [counts, setCounts] = useState<TicketCounts>({ total: 0, open: 0, 'in progress': 0, resolved: 0 })
   const [loading, setLoading] = useState(true)
@@ -55,15 +75,32 @@ const TicketsTab = () => {
   const [selectedStatus, setSelectedStatus] = useState<TicketStatus>('open')
   const [updating, setUpdating] = useState(false)
 
+  // timeline / history
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineKey, setTimelineKey] = useState(0)
+
+  // notes
+  const [noteText, setNoteText] = useState("")
+  const [addingNote, setAddingNote] = useState(false)
+
+  // update modal note
+  const [updateNote, setUpdateNote] = useState("")
+
+  // scroll persistence for timeline
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const scrollPositions = useRef<Map<string, number>>(new Map())
+
   //pagination
   const [page, setPage] = useState(1)
- const totalPages = Math.max(1, Math.ceil(tickets.length / PAGE_SIZE))
-const safePage = Math.min(page, totalPages)
+  const totalPages = Math.max(1, Math.ceil(tickets.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
 
-const pagedTickets = tickets.slice(
-  (safePage - 1) * PAGE_SIZE,
-  safePage * PAGE_SIZE
-)
+  const pagedTickets = tickets.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE
+  )
+
   useEffect(() => {
     setMounted(true)
     fetchTicketData()
@@ -81,7 +118,7 @@ const pagedTickets = tickets.slice(
         getCountFromServer(query(collection(db, "support_tickets"), where("status", "==", "resolved"))),
       ])
 
-      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as SupportTicket[]
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as SupportTicket[]
       setTickets(data)
 
       setCounts({
@@ -98,11 +135,37 @@ const pagedTickets = tickets.slice(
     }
   }
 
-  // derive unique subjects for the subject dropdown
-  const subjectOptions = useMemo(() => {
-    const set = new Set(tickets.map(t => t.subject).filter(Boolean))
-    return Array.from(set).sort()
-  }, [tickets])
+  const fetchTimeline = useCallback(async (ticketId: string) => {
+    setTimelineLoading(true)
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "activityLogs"),
+          where("targetId", "==", ticketId),
+          where("module", "==", "support"),
+        )
+      )
+      const entries: TimelineEntry[] = snap.docs
+        .map(d => {
+          const data = d.data()
+          return {
+            action:     data.action ?? "",
+            actorName:  data.actorName ?? "Unknown",
+            date:       data.createdAt?.toDate?.() ?? null,
+            description: data.description ?? undefined,
+            fromStatus: data.meta?.other?.fromStatus ?? undefined,
+            toStatus:   data.meta?.other?.toStatus ?? undefined,
+          }
+        })
+        .filter(e => e.action in TIMELINE_CONFIG)
+        .sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0))
+      setTimeline(entries)
+    } catch {
+      setTimeline([])
+    } finally {
+      setTimelineLoading(false)
+    }
+  }, [])
 
   // live-filtered tickets
   const filteredTickets = useMemo(() => {
@@ -121,9 +184,18 @@ const pagedTickets = tickets.slice(
     setFilterStatus("")
   }
 
+  const handleOpenView = (ticket: SupportTicket) => {
+    setTicketData(ticket)
+    setNoteText("")
+    setTimeline([])
+    setIsOpen(true)
+    fetchTimeline(ticket.id)
+  }
+
   const handleOpenUpdate = (ticket: SupportTicket) => {
     setUpdateTarget(ticket)
     setSelectedStatus(ticket.status)
+    setUpdateNote("")
     setIsUpdateOpen(true)
   }
 
@@ -131,10 +203,59 @@ const pagedTickets = tickets.slice(
     if (!updateTarget) return
     try {
       setUpdating(true)
-      await updateDoc(doc(db, "support_tickets", updateTarget.id), { status: selectedStatus })
+      const prevStatus = updateTarget.status
+      const extras: Record<string, unknown> = { status: selectedStatus }
+      if (selectedStatus === 'resolved') {
+        extras.resolvedBy = user?.displayName ?? user?.email ?? "Admin"
+        extras.resolvedAt = serverTimestamp()
+      }
+      await updateDoc(doc(db, "support_tickets", updateTarget.id), extras)
+
+      if (selectedStatus === 'resolved' && updateTarget.roomId) {
+        await updateDoc(doc(db, "chat_rooms", updateTarget.roomId as string), { status: 'resolved' })
+      }
+
+      if (user) {
+        await writeLog({
+          actorId:    user.uid,
+          actorName:  user.displayName ?? "Admin",
+          actorEmail: user.email ?? undefined,
+          module:     "support",
+          action:     "ticket_status_updated",
+          description: buildDescription.ticketStatusUpdated(
+            updateTarget.ticket_number,
+            prevStatus,
+            selectedStatus,
+            user.displayName ?? "Admin"
+          ),
+          targetId:   updateTarget.id,
+          targetName: updateTarget.subject,
+          meta: { other: { fromStatus: prevStatus, toStatus: selectedStatus } },
+        })
+      }
+
+      if (updateNote.trim() && user) {
+        await writeLog({
+          actorId:    user.uid,
+          actorName:  user.displayName ?? "Admin",
+          actorEmail: user.email ?? undefined,
+          module:     "support",
+          action:     "ticket_note",
+          description: updateNote.trim(),
+          targetId:   updateTarget.id,
+          targetName: updateTarget.subject,
+        })
+      }
+
       fetchTicketData()
       setIsUpdateOpen(false)
+      setUpdateNote("")
       toast.success("Ticket updated successfully")
+
+      // refresh view modal timeline if the same ticket is open
+      if (ticketData?.id === updateTarget.id) {
+        setTimelineKey(k => k + 1)
+      }
     } catch (err) {
       console.error("Failed to update ticket:", err)
       toast.error("Failed to update ticket")
@@ -142,6 +263,41 @@ const pagedTickets = tickets.slice(
       setUpdating(false)
     }
   }
+
+  const handleAddNote = useCallback(async () => {
+    if (!ticketData || !user || !noteText.trim()) return
+    setAddingNote(true)
+    try {
+      await writeLog({
+        actorId:    user.uid,
+        actorName:  user.displayName ?? "Admin",
+        actorEmail: user.email ?? undefined,
+        module:     "support",
+        action:     "ticket_note",
+        description: noteText.trim(),
+        targetId:   ticketData.id,
+        targetName: ticketData.subject,
+      })
+      setNoteText("")
+      scrollPositions.current.delete(ticketData.id)
+      await fetchTimeline(ticketData.id)
+      setTimeout(() => { if (timelineRef.current) timelineRef.current.scrollTop = 0 }, 100)
+    } finally {
+      setAddingNote(false)
+    }
+  }, [ticketData, user, noteText, fetchTimeline])
+
+  // refresh timeline when timelineKey changes (triggered after update)
+  useEffect(() => {
+    if (ticketData && timelineKey > 0) fetchTimeline(ticketData.id)
+  }, [timelineKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // restore scroll position when timeline reloads
+  useEffect(() => {
+    if (!ticketData || !timelineRef.current) return
+    const saved = scrollPositions.current.get(ticketData.id) ?? 0
+    timelineRef.current.scrollTop = saved
+  }, [ticketData?.id, timelineLoading])
 
   const formatDate = (date: Timestamp) => {
     return date.toDate().toLocaleString("en-US", {
@@ -151,6 +307,11 @@ const pagedTickets = tickets.slice(
       hour: "2-digit",
       minute: "2-digit",
     })
+  }
+
+  const fmtDate = (date: Date | null) => {
+    if (!date) return "—"
+    return date.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
   }
 
   const statusClassName = (status: string) => {
@@ -191,7 +352,6 @@ const pagedTickets = tickets.slice(
 
       {/* Filter bar */}
       <div className="ticket-filters">
-        {/* Search: name or email */}
         <div className="ticket-filter-search">
           <Search size={14} className="ticket-filter-search-icon" />
           <input
@@ -208,7 +368,6 @@ const pagedTickets = tickets.slice(
           )}
         </div>
 
-        {/* Status dropdown */}
         <select
           value={filterStatus}
           onChange={e => setFilterStatus(e.target.value as TicketStatus | "")}
@@ -222,7 +381,6 @@ const pagedTickets = tickets.slice(
           ))}
         </select>
 
-        {/* Clear all */}
         {hasActiveFilters && (
           <button className="ticket-filter-clear-all" onClick={clearFilters}>
             <X size={12} /> Clear
@@ -262,7 +420,7 @@ const pagedTickets = tickets.slice(
                   <td><div className={statusClassName(ticket.status)}>{ticket.status}</div></td>
                   <td><div className="admin-name">{formatDate(ticket.createdAt as Timestamp)}</div></td>
                   <td className="action-row">
-                    <button className="icon-btn" onClick={() => { setTicketData(ticket); setIsOpen(true) }}>
+                    <button className="icon-btn" onClick={() => handleOpenView(ticket)}>
                       <Eye size={13} />
                     </button>
                     <button className="icon-btn" onClick={() => handleOpenUpdate(ticket)}>
@@ -274,38 +432,38 @@ const pagedTickets = tickets.slice(
             )}
           </tbody>
         </table>
-         <div className="up-pg">
-              <span className="up-pg-info">
-                {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, tickets.length)} of {tickets.length} tickets
-              </span>
-              <div className="up-pg-btns">
-                <button className="up-pg-btn" onClick={() => setPage(1)} disabled={safePage === 1}>«</button>
-                <button className="up-pg-btn" onClick={() => setPage((p) => p - 1)} disabled={safePage === 1}>‹</button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter((p) => Math.abs(p - safePage) <= 2 || p === 1 || p === totalPages)
-                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((p, i) =>
-                    p === "…" ? (
-                      <span key={`e${i}`} style={{ padding: "0 4px", color: "var(--text-muted)", fontSize: 12 }}>…</span>
-                    ) : (
-                      <button
-                        key={p}
-                        className={`up-pg-btn${p === safePage ? " active" : ""}`}
-                        onClick={() => setPage(p as number)}
-                        disabled={p === safePage}
-                      >
-                        {p}
-                      </button>
-                    )
-                  )}
-                <button className="up-pg-btn" onClick={() => setPage((p) => p + 1)} disabled={safePage === totalPages}>›</button>
-                <button className="up-pg-btn" onClick={() => setPage(totalPages)} disabled={safePage === totalPages}>»</button>
-              </div>
-            </div>
+        <div className="up-pg">
+          <span className="up-pg-info">
+            {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, tickets.length)} of {tickets.length} tickets
+          </span>
+          <div className="up-pg-btns">
+            <button className="up-pg-btn" onClick={() => setPage(1)} disabled={safePage === 1}>«</button>
+            <button className="up-pg-btn" onClick={() => setPage((p) => p - 1)} disabled={safePage === 1}>‹</button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter((p) => Math.abs(p - safePage) <= 2 || p === 1 || p === totalPages)
+              .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                acc.push(p);
+                return acc;
+              }, [])
+              .map((p, i) =>
+                p === "…" ? (
+                  <span key={`e${i}`} style={{ padding: "0 4px", color: "var(--text-muted)", fontSize: 12 }}>…</span>
+                ) : (
+                  <button
+                    key={p}
+                    className={`up-pg-btn${p === safePage ? " active" : ""}`}
+                    onClick={() => setPage(p as number)}
+                    disabled={p === safePage}
+                  >
+                    {p}
+                  </button>
+                )
+              )}
+            <button className="up-pg-btn" onClick={() => setPage((p) => p + 1)} disabled={safePage === totalPages}>›</button>
+            <button className="up-pg-btn" onClick={() => setPage(totalPages)} disabled={safePage === totalPages}>»</button>
+          </div>
+        </div>
       </div>
 
       {/* View modal */}
@@ -334,6 +492,100 @@ const pagedTickets = tickets.slice(
               <span className="ticket-modal-label">Message</span>
               <p className="ticket-modal-message">{ticketData.message}</p>
             </div>
+
+            {ticketData.status === 'resolved' && ticketData.resolvedBy && (
+              <div className="ticket-resolved-banner">
+                <span>Resolved by <strong>{ticketData.resolvedBy}</strong></span>
+                {ticketData.resolvedAt && (
+                  <span style={{ marginLeft: 8, color: "var(--text-muted)" }}>
+                    · {formatDate(ticketData.resolvedAt as Timestamp)}
+                  </span>
+                )}
+              </div>
+            )}
+
+            <hr className="ticket-modal-divider" />
+
+            {/* History / Timeline */}
+            <div className="ticket-modal-section">
+              <span className="ticket-modal-label" style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <FileText size={11} /> History
+              </span>
+              <div
+                ref={timelineRef}
+                className="ticket-timeline-wrap"
+                onScroll={() => {
+                  if (ticketData && timelineRef.current)
+                    scrollPositions.current.set(ticketData.id, timelineRef.current.scrollTop)
+                }}
+              >
+                {timelineLoading ? (
+                  <div className="ticket-timeline-empty">Loading history…</div>
+                ) : timeline.length === 0 ? (
+                  <div className="ticket-timeline-empty">No history yet.</div>
+                ) : (
+                  <div className="ticket-timeline">
+                    {timeline.map((entry, i) => {
+                      const isLast = i === timeline.length - 1
+                      const cfg = TIMELINE_CONFIG[entry.action] ?? TIMELINE_CONFIG.ticket_status_updated
+                      return (
+                        <div key={i} className="ticket-timeline-row">
+                          <div className="ticket-timeline-track">
+                            <div
+                              className="ticket-timeline-dot"
+                              style={{ background: cfg.color, boxShadow: `0 0 0 3px ${cfg.glow}` }}
+                            />
+                            {!isLast && <div className="ticket-timeline-line" />}
+                          </div>
+                          <div className="ticket-timeline-content">
+                            <span className="ticket-timeline-action" style={{ color: cfg.color }}>
+                              {cfg.label}
+                              {entry.action === "ticket_status_updated" && entry.fromStatus && entry.toStatus && (
+                                <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+                                  {" "}· {entry.fromStatus} → {entry.toStatus}
+                                </span>
+                              )}
+                            </span>
+                            <span className="ticket-timeline-actor">{entry.actorName}</span>
+                            <span className="ticket-timeline-date">{fmtDate(entry.date)}</span>
+                            {entry.action === "ticket_note" && entry.description && (
+                              <span className="ticket-timeline-note-text">{entry.description}</span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Add note box */}
+            {ticketData.status === 'resolved' ? (
+              <div className="ticket-note-box ticket-note-box--locked">
+                <p className="ticket-note-locked-msg">This ticket is resolved. No further notes can be added.</p>
+              </div>
+            ) : (
+              <div className="ticket-note-box">
+                <textarea
+                  className="ticket-note-textarea"
+                  placeholder="Add a note… (Ctrl+Enter to submit)"
+                  rows={2}
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAddNote() }}
+                />
+                <button
+                  className="ticket-note-submit"
+                  onClick={handleAddNote}
+                  disabled={!noteText.trim() || addingNote}
+                >
+                  <Send size={12} />
+                  {addingNote ? "Saving…" : "Add Note"}
+                </button>
+              </div>
+            )}
+
             <hr className="ticket-modal-divider" />
             <div className="ticket-modal-footer">
               <span>User ID: {ticketData.userId}</span>
@@ -368,6 +620,17 @@ const pagedTickets = tickets.slice(
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="ticket-modal-section">
+              <span className="ticket-modal-label">Note (optional)</span>
+              <textarea
+                className="ticket-note-textarea"
+                placeholder="Add a comment about this status change…"
+                rows={2}
+                value={updateNote}
+                onChange={e => setUpdateNote(e.target.value)}
+              />
             </div>
 
             <hr className="ticket-modal-divider" />

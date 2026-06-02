@@ -65,6 +65,11 @@ const SKILL_NOTIF_PRESETS = [
     preview: 'Your skill request for "[skillName]" has been approved.',
   },
   {
+    id: "approved_mapped",
+    label: "Request Approved (mapped to official skill)",
+    preview: 'Your skill verification request for "[prevSkillName]" has been approved and mapped to the official skill "[skillName]".',
+  },
+  {
     id: "rejected",
     label: "Request Rejected (with reason)",
     preview: 'Your skill request for "[skillName]" was not approved. Reason: [reason]. You may submit a new request anytime.',
@@ -135,6 +140,7 @@ export default function UserSkillsPage() {
   const [notifUserSearch, setNotifUserSearch]     = useState("");
   const [notifUser, setNotifUser]                 = useState<NotifUser | null>(null);
   const [notifSkillName, setNotifSkillName]       = useState("");
+  const [notifPrevSkillName, setNotifPrevSkillName] = useState("");
   const [notifPreset, setNotifPreset]             = useState<NotifPresetId | "">("");
   const [notifRejectedReason, setNotifRejectedReason] = useState("");
   const [notifCustomMessage, setNotifCustomMessage]   = useState("");
@@ -451,18 +457,22 @@ export default function UserSkillsPage() {
 
   const notifFinalMessage = useMemo(() => {
     if (!notifPreset) return "";
-    const skillLabel = notifSkillName || "[skill]";
+    const skillLabel    = notifSkillName     || "[skill]";
+    const prevSkillLabel = notifPrevSkillName || "[requested skill]";
     if (notifPreset === "approved")
       return `Your skill request for "${skillLabel}" has been approved.`;
+    if (notifPreset === "approved_mapped")
+      return `Your skill verification request for "${prevSkillLabel}" has been approved and mapped to the official skill "${skillLabel}".`;
     if (notifPreset === "rejected")
       return `Your skill request for "${skillLabel}" was not approved. Reason: ${notifRejectedReason.trim() || "[reason]"}. You may submit a new request anytime.`;
     if (notifPreset === "custom") return notifCustomMessage.trim();
     return "";
-  }, [notifPreset, notifSkillName, notifRejectedReason, notifCustomMessage]);
+  }, [notifPreset, notifSkillName, notifPrevSkillName, notifRejectedReason, notifCustomMessage]);
 
   const handleSendNotification = useCallback(async () => {
     if (!notifUser || !notifFinalMessage || !user) return;
-    if ((notifPreset === "approved" || notifPreset === "rejected") && !notifSkillName.trim()) return;
+    if ((notifPreset === "approved" || notifPreset === "approved_mapped" || notifPreset === "rejected") && !notifSkillName.trim()) return;
+    if (notifPreset === "approved_mapped" && !notifPrevSkillName.trim()) return;
     if (notifPreset === "rejected" && !notifRejectedReason.trim()) return;
     if (notifPreset === "custom" && !notifCustomMessage.trim()) return;
     setSendingNotif(true);
@@ -494,6 +504,7 @@ export default function UserSkillsPage() {
       setNotifUser(null);
       setNotifUserSearch("");
       setNotifSkillName("");
+      setNotifPrevSkillName("");
       setNotifPreset("");
       setNotifRejectedReason("");
       setNotifCustomMessage("");
@@ -514,11 +525,14 @@ export default function UserSkillsPage() {
     skillName: string,
     decision: "approved" | "rejected",
     adminRemarks?: string,
+    mappedFromLibrary?: boolean,
+    prevSkillRequestedName?: string,
   ) => {
     setNotifUser({ id: userId, name: userName, email: userEmail, photoUrl: "" });
     setNotifUserSearch(userName);
     setNotifSkillName(skillName);
-    setNotifPreset(decision);
+    setNotifPrevSkillName(mappedFromLibrary ? (prevSkillRequestedName ?? "") : "");
+    setNotifPreset(decision === "approved" && mappedFromLibrary ? "approved_mapped" : decision);
     setNotifRejectedReason(decision === "rejected" ? (adminRemarks ?? "") : "");
     setNotifRequestStatus(decision);
     setNotifCustomMessage("");
@@ -1157,7 +1171,7 @@ export default function UserSkillsPage() {
                 Sending notification for <strong>{notifUser.name}</strong> — {notifSkillName}
               </span>
               <button
-                onClick={() => { setNotifUser(null); setNotifUserSearch(""); setNotifSkillName(""); setNotifPreset(""); setNotifRejectedReason(""); setNotifRequestStatus(""); }}
+                onClick={() => { setNotifUser(null); setNotifUserSearch(""); setNotifSkillName(""); setNotifPrevSkillName(""); setNotifPreset(""); setNotifRejectedReason(""); setNotifRequestStatus(""); }}
                 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
               >
                 Clear ×
@@ -1245,6 +1259,29 @@ export default function UserSkillsPage() {
               </div>
             )}
 
+            {notifPreset === "approved_mapped" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label className="sl-label">Requested Skill Name <span style={{ color: "var(--red)" }}>*</span></label>
+                  <input
+                    className={`sl-input${!notifPrevSkillName.trim() ? " sl-input-err" : ""}`}
+                    placeholder="What the user originally requested"
+                    value={notifPrevSkillName}
+                    onChange={(e) => setNotifPrevSkillName(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label className="sl-label">Official Skill Name (Library) <span style={{ color: "var(--red)" }}>*</span></label>
+                  <input
+                    className={`sl-input${!notifSkillName.trim() ? " sl-input-err" : ""}`}
+                    placeholder="The mapped skill from the library"
+                    value={notifSkillName}
+                    onChange={(e) => setNotifSkillName(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
             {notifPreset === "rejected" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <label className="sl-label">Rejection Reason <span style={{ color: "var(--red)" }}>*</span></label>
@@ -1322,7 +1359,8 @@ export default function UserSkillsPage() {
                 !notifPreset ||
                 !notifRequestStatus ||
                 sendingNotif ||
-                ((notifPreset === "approved" || notifPreset === "rejected") && !notifSkillName.trim()) ||
+                ((notifPreset === "approved" || notifPreset === "approved_mapped" || notifPreset === "rejected") && !notifSkillName.trim()) ||
+                (notifPreset === "approved_mapped" && !notifPrevSkillName.trim()) ||
                 (notifPreset === "rejected" && !notifRejectedReason.trim()) ||
                 (notifPreset === "custom" && !notifCustomMessage.trim())
               }

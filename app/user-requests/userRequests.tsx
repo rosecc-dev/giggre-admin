@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/firebase"
 import "./userRequestsStyle.css"
 import Modal from "@/components/ui/Modal"
-import { Eye, Check, X, RefreshCw, Search, User, ChevronUp, ChevronDown, RotateCcw, Calendar, FileText, CheckCircle2, XCircle, MessageSquare, Send, Library, AlertTriangle } from "lucide-react"
+import { Eye, Check, X, RefreshCw, Search, User, ChevronUp, ChevronDown, RotateCcw, Calendar, FileText, CheckCircle2, XCircle, MessageSquare, Send, Library, AlertTriangle, Link2 } from "lucide-react"
 import { toast } from "@/components/ui/Toaster"
 import { writeLog, buildDescription } from "@/lib/activitylog"
 import { useAuth } from "@/context/AuthContext"
@@ -38,6 +38,8 @@ interface SkillRequest {
   proofUrls: string[]
   adminRemarks: string
   suggestedRequirement: string
+  prevSkillRequestedName?: string
+  mappedFromLibrary?: boolean
   createdAt: Timestamp
   updatedAt: Timestamp
 }
@@ -90,6 +92,8 @@ interface UserRequestsProps {
     skillName: string,
     decision: "approved" | "rejected",
     adminRemarks?: string,
+    mappedFromLibrary?: boolean,
+    prevSkillRequestedName?: string,
   ) => void
 }
 
@@ -141,6 +145,12 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
   const [gsinName, setGsinName]           = useState("")
   const [gsinSaving, setGsinSaving]       = useState(false)
   const [gsinError, setGsinError]         = useState("")
+
+  // ── "Set from Library" link state ───────────────────────────────────────
+  const [linkSkillItem, setLinkSkillItem]   = useState<SkillRequest | null>(null)
+  const [linkSearch, setLinkSearch]         = useState("")
+  const [linkSelected, setLinkSelected]     = useState<GsinSkill | null>(null)
+  const [linkSaving, setLinkSaving]         = useState(false)
 
   useEffect(() => {
     getDocs(query(collection(db, "skills"), orderBy("createdAt", "asc")))
@@ -195,6 +205,54 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
     throw new Error("Could not generate a unique GSIN ID.")
   }
 
+  const filteredLinkSkills = useMemo(() => {
+    const q = linkSearch.toLowerCase().trim()
+    if (!q) return gsinSkills
+    return gsinSkills.filter(s =>
+      s.name.toLowerCase().includes(q) || s.skillId.toLowerCase().includes(q)
+    )
+  }, [linkSearch, gsinSkills])
+
+  const openLinkSkill = (request: SkillRequest) => {
+    setLinkSkillItem(request)
+    setLinkSearch(request.skillName || "")
+    setLinkSelected(null)
+  }
+
+  const handleLinkSkill = async () => {
+    if (!linkSkillItem || !linkSelected) return
+    try {
+      setLinkSaving(true)
+      await updateDoc(doc(db, "skill_requests", linkSkillItem.id), {
+        skillId:                linkSelected.skillId,
+        skillName:              linkSelected.name,
+        prevSkillRequestedName: linkSkillItem.skillName || "",
+        mappedFromLibrary:      true,
+        updatedAt:              serverTimestamp(),
+      })
+
+      writeLog({
+        actorId:    user?.uid ?? "",
+        actorName:  user?.displayName ?? "Unknown",
+        actorEmail: user?.email ?? "",
+        module:     "user_requests",
+        action:     "user_request_note",
+        description: `Linked skill request ${linkSkillItem.skill_req_Id} to existing library skill "${linkSelected.name}" (${linkSelected.skillId})`,
+        targetId:   linkSkillItem.id,
+        targetName: linkSkillItem.skill_req_Id,
+        meta: { to: { skillId: linkSelected.skillId, skillName: linkSelected.name } },
+      })
+
+      toast.success(`Linked to "${linkSelected.name}" (${linkSelected.skillId})`)
+      setLinkSkillItem(null)
+    } catch (err) {
+      console.error("Failed to link skill:", err)
+      toast.error("Failed to link skill.")
+    } finally {
+      setLinkSaving(false)
+    }
+  }
+
   const handleAddToGsin = async () => {
     if (!addToGsinItem) return
     const trimmed = gsinName.trim()
@@ -215,9 +273,10 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
 
       // Link the skill_request to the newly created skill and sync the name
       await updateDoc(doc(db, "skill_requests", addToGsinItem.id), {
-        skillId:   libraryId,
-        skillName: trimmed,
-        updatedAt: serverTimestamp(),
+        skillId:              libraryId,
+        skillName:            trimmed,
+        prevSkillRequestedName: addToGsinItem.skillName || "",
+        updatedAt:            serverTimestamp(),
       })
 
       writeLog({
@@ -402,12 +461,11 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         updatedAt: serverTimestamp(),
       })
 
-      // add skill to gig worker's skillsXP at level 1 if not already present
-      const workerId = request.gigWorkerId || request.userId
-      if (workerId && request.skillName) {
-        await updateDoc(doc(db, "users", workerId), {
-          [`skillsXP.${request.skillName}`]: 1,
-        })
+      // add skill to user's skillsXP at level 1 if not already present
+      if (request.userId && request.skillName) {
+        await setDoc(doc(db, "users", request.userId), {
+          skillsXP: { [request.skillName]: 1 },
+        }, { mergeFields: [`skillsXP.${request.skillName}`] })
       }
 
       toast.success("Request approved")
@@ -422,7 +480,12 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         targetName: request.skill_req_Id,
         meta: { other: { skillName: request.skillName, userId: request.userId } },
       })
-      onRequestDecision?.(request.userId, request.userName, request.userEmail, request.skillName, "approved")
+      onRequestDecision?.(
+        request.userId, request.userName, request.userEmail, request.skillName,
+        "approved", undefined,
+        request.mappedFromLibrary,
+        request.prevSkillRequestedName,
+      )
     } catch (err) {
       console.error("Approve failed:", err)
       toast.error("Failed to approve request")
@@ -681,16 +744,25 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
                     {r.skillId
                       ? <span className="ur-ticket">{r.skillId}</span>
                       : (
-                        <button
-                          className="ur-gsin-add-btn"
-                          onClick={() => openAddToGsin(r)}
-                          title="Add this skill to the GSIN library"
-                        >
-                          <Library size={11} />
-                          Add to GSIN
-                        </button>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <button
+                            className="ur-gsin-add-btn"
+                            onClick={() => openAddToGsin(r)}
+                            title="Add this skill to the GSIN library"
+                          >
+                            <Library size={11} />
+                            Add to Skills Library
+                          </button>
+                          <button
+                            className="ur-gsin-link-btn"
+                            onClick={() => openLinkSkill(r)}
+                            title="Link to an existing skill in the library"
+                          >
+                            <Link2 size={11} />
+                            Set from Library
+                          </button>
+                        </div>
                       )
-                      // : <span style={{ fontSize: 12, color: "var(--red)" }}> Not Added </span>
                     }
                   </td>
                   <td><div className="admin-name">{r.skillName || "—"}</div></td>
@@ -1087,6 +1159,85 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
               >
                 <Library size={13} style={{ marginRight: 6 }} />
                 {gsinSaving ? "Adding…" : "Add to Library"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Set from Library modal ── */}
+      <Modal
+        open={!!linkSkillItem}
+        onClose={() => { if (!linkSaving) setLinkSkillItem(null) }}
+        title="Set Skill from Library"
+        size="sm"
+      >
+        {linkSkillItem && (
+          <div className="ticket-modal">
+            <div className="ticket-modal-section">
+              <span className="ticket-modal-label">Request</span>
+              <p className="ticket-modal-subject" style={{ fontSize: 13 }}>
+                {linkSkillItem.userName}
+                <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {linkSkillItem.skillName || "—"}</span>
+              </p>
+            </div>
+
+            <hr className="ticket-modal-divider" />
+
+            <div className="ticket-modal-section">
+              <label className="ticket-modal-label" htmlFor="link-skill-search">
+                Search Library
+              </label>
+              <div className="ur-search-wrap" style={{ marginTop: 4 }}>
+                <Search size={13} className="ur-search-icon" />
+                <input
+                  id="link-skill-search"
+                  className="ur-search-input"
+                  placeholder="Search by skill name or ID…"
+                  value={linkSearch}
+                  onChange={e => { setLinkSearch(e.target.value); setLinkSelected(null) }}
+                  autoFocus
+                />
+                {linkSearch && (
+                  <button className="ur-search-clear" onClick={() => { setLinkSearch(""); setLinkSelected(null) }}>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="ur-link-skill-list">
+              {filteredLinkSkills.length === 0 ? (
+                <p style={{ fontSize: 12, color: "var(--text-muted)", padding: "10px 0" }}>No skills match your search.</p>
+              ) : (
+                filteredLinkSkills.map(s => (
+                  <button
+                    key={s.id}
+                    className={`ur-link-skill-item${linkSelected?.id === s.id ? " ur-link-skill-item--selected" : ""}`}
+                    onClick={() => setLinkSelected(s)}
+                  >
+                    <div className="ur-link-skill-info">
+                      <span className="ur-link-skill-name">{s.name}</span>
+                      <span className="ur-link-skill-id">{s.skillId}</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <hr className="ticket-modal-divider" />
+
+            <div className="ticket-modal-actions">
+              <button className="ticket-btn-cancel" onClick={() => setLinkSkillItem(null)} disabled={linkSaving}>
+                Cancel
+              </button>
+              <button
+                className="ticket-btn-confirm"
+                onClick={handleLinkSkill}
+                disabled={!linkSelected || linkSaving}
+              >
+                <Link2 size={13} style={{ marginRight: 6 }} />
+                {linkSaving ? "Linking…" : "Set Skill"}
               </button>
             </div>
           </div>

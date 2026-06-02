@@ -24,7 +24,7 @@ export default function AdminLayout({
 
   if (loading) {
     return (
-      <div style={{
+      <div suppressHydrationWarning style={{
         height: "100vh",
         display: "flex",
         alignItems: "center",
@@ -38,7 +38,7 @@ export default function AdminLayout({
             to { transform: rotate(360deg); }
           }
         `}</style>
-        <div style={{
+        <div suppressHydrationWarning style={{
           width: 34,
           height: 34,
           border: "3px solid var(--border)",

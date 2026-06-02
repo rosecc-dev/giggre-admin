@@ -43,7 +43,8 @@ export type GigLogAction =
   | "gig_updated"
   | "gig_deleted"
   | "gig_closed"
-  | "gig_cancelled";
+  | "gig_cancelled"
+  | "gig_bulk_cancelled";
 
 export type QuickGigLogAction = "config_updated";
 
@@ -69,6 +70,10 @@ export type VerificationLogAction =
   | "verification_document_viewed"
   | "verification_document_downloaded";
 
+export type SupportLogAction =
+  | "ticket_status_updated"
+  | "ticket_note";
+
 export type LogAction =
   | AdminLogAction
   | ContentLogAction
@@ -78,7 +83,8 @@ export type LogAction =
   | SkillLogAction
   | SettingsLogAction
   | UserRequestLogAction
-  | VerificationLogAction;
+  | VerificationLogAction
+  | SupportLogAction;
 
 export type LogModule =
   | "admin_management"
@@ -91,6 +97,7 @@ export type LogModule =
   | "library"
   | "quick_gig_config"
   | "user_requests"
+  | "support"
   | "verification";
 
 export type ContentSectionKey =
@@ -238,6 +245,9 @@ export const buildDescription = {
   gigCancelled: (gigTitle: string, gigType: string) =>
     `Cancelled ${gigType} gig "${gigTitle}"`,
 
+  gigBulkCancelled: (adminName: string, count: number) =>
+    `${adminName} bulk-cancelled ${count} gig${count !== 1 ? "s" : ""}`,
+
   // ── Settings ──────────────────────────────────────────────────────────────
 
   settingsUpdated: (section: string) =>
@@ -253,6 +263,14 @@ export const buildDescription = {
 
   userRequestReopened: (ticketNumber: string, skillName: string, userName: string) =>
     `Reopened request ${ticketNumber} — "${skillName}" for ${userName} (reset to pending)`,
+
+  // ── Support tickets ───────────────────────────────────────────────────────
+
+  ticketStatusUpdated: (ticketNumber: string, from: string, to: string, actorName: string) =>
+    `${actorName} updated ticket #${ticketNumber} status from "${from}" to "${to}"`,
+
+  ticketNote: (ticketNumber: string, actorName: string) =>
+    `${actorName} added a note to ticket #${ticketNumber}`,
 };
 
 // ─── writeLog ────────────────────────────────────────────────────────────────
