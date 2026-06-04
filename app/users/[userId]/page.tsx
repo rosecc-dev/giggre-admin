@@ -862,6 +862,7 @@ export default function UserProfilePage() {
   const [referredUsersLoading, setReferredUsersLoading] = useState(false);
   const [referredUsersPage, setReferredUsersPage]   = useState(1);
   const [activeSkillTab, setActiveSkillTab]         = useState<"skills" | "requests">("skills");
+  const [selectedDoc, setSelectedDoc]               = useState<{ category: string; name: string; url: string; uploadedAt: Timestamp | null } | null>(null);
   const [userSkillRequests, setUserSkillRequests]   = useState<{
     id: string; skillName: string; skillCategory: string; status: string;
     reason: string; experienceLevel: string; createdAt: Timestamp | null;
@@ -1620,9 +1621,13 @@ export default function UserProfilePage() {
                     </div>
                   </div>
                   {d.url && (
-                    <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--blue)", display: "flex", alignItems: "center", flexShrink: 0 }} title="View document">
+                    <button
+                      onClick={() => setSelectedDoc(d)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--blue)", display: "flex", alignItems: "center", flexShrink: 0, padding: 0 }}
+                      title="View document"
+                    >
                       <ExternalLink size={13} />
-                    </a>
+                    </button>
                   )}
                 </div>
               ))}
@@ -2343,6 +2348,52 @@ export default function UserProfilePage() {
           saving={savingHostRewardSkills}
         />
       )}
+
+      {/* Document Viewer Modal */}
+      <Modal
+        open={!!selectedDoc}
+        onClose={() => setSelectedDoc(null)}
+        title={selectedDoc?.name ?? "Document"}
+        description={selectedDoc ? selectedDoc.category.replace(/_/g, " ") + (selectedDoc.uploadedAt ? ` · ${selectedDoc.uploadedAt.toDate().toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}` : "") : undefined}
+        size="lg"
+        bodyStyle={{ padding: 0 }}
+        footer={
+          selectedDoc?.url ? (
+            <a href={selectedDoc.url} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--blue)", textDecoration: "none" }}>
+              <ExternalLink size={13} /> Open in new tab
+            </a>
+          ) : undefined
+        }
+      >
+        {selectedDoc?.url && (() => {
+          const url = selectedDoc.url;
+          const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url) || url.includes("image");
+          const isPdf = /\.pdf(\?|$)/i.test(url) || url.includes("pdf");
+          if (isImage) {
+            return (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-base)", minHeight: 300, maxHeight: "70vh", overflow: "auto" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={selectedDoc.name} style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", display: "block" }} />
+              </div>
+            );
+          }
+          if (isPdf) {
+            return (
+              <iframe
+                src={url}
+                title={selectedDoc.name}
+                style={{ width: "100%", height: 600, border: "none", display: "block" }}
+              />
+            );
+          }
+          return (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "40px 24px", color: "var(--text-muted)", fontSize: 13 }}>
+              <FileText size={40} style={{ color: "var(--blue)", opacity: 0.6 }} />
+              <span>Preview not available for this file type.</span>
+            </div>
+          );
+        })()}
+      </Modal>
     </AdminLayout>
   );
 }
