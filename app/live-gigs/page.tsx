@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, memo } from "react";
+import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
 import AdminLayout from "@/components/layout/AdminLayout";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
@@ -30,6 +30,7 @@ import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { useAuth } from "@/context/AuthContext";
 import { useCurrency } from "@/context/CurrencyContext";
 import { writeLog, buildDescription } from "@/lib/activitylog";
+import { toast } from "@/components/ui/Toaster";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -174,6 +175,8 @@ export default function LiveGigsPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("cancellation_requests");
 
   const [gigs, setGigs] = useState<Gig[]>([]);
+  const recentlyCancelledRef = useRef<Set<string>>(new Set());
+  const isCancellingRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -260,6 +263,7 @@ export default function LiveGigsPage() {
           })
         )
       );
+      cancellableSelected.forEach((gig) => recentlyCancelledRef.current.add(gig.id));
       setGigs((prev) =>
         prev.map((g) =>
           selectedIds.has(g.id) &&
@@ -296,6 +300,7 @@ export default function LiveGigsPage() {
               title: g.title || "Untitled Gig",
               gigType: g.gigType,
               collection: GIG_COLLECTIONS[g.gigType],
+              previousStatus: g.status,
             })),
           },
         },
@@ -306,6 +311,39 @@ export default function LiveGigsPage() {
     } catch (err) {
       console.error("Bulk cancel failed:", err);
       setBulkCancelError("Some gigs could not be cancelled. Please try again.");
+      toast.error(
+        "Bulk cancellation failed",
+        `${cancellableSelected.length} gig${cancellableSelected.length !== 1 ? "s" : ""} could not be cancelled. Changes were not saved.`
+      );
+      try {
+        await writeLog({
+          actorId: adminId,
+          actorName: adminName,
+          actorEmail: user!.email ?? "",
+          module: "gig_management",
+          action: "gig_bulk_cancel_failed",
+          description: buildDescription.gigBulkCancelFailed(adminName, cancellableSelected.length),
+          meta: {
+            other: {
+              error: err instanceof Error ? err.message : String(err),
+              totalAttempted: cancellableSelected.length,
+              cancellationReason: bulkCancelReason.trim() || null,
+              cancellationTicketID: bulkCancelTicketID.trim() || "N/A",
+              cancelledByAdminId: adminId,
+              cancelledByAdminName: adminName,
+              gigs: cancellableSelected.map((g) => ({
+                id: g.id,
+                title: g.title || "Untitled Gig",
+                gigType: g.gigType,
+                collection: GIG_COLLECTIONS[g.gigType],
+                previousStatus: g.status,
+              })),
+            },
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to log bulk cancel failure:", logErr);
+      }
     } finally {
       setBulkCancelling(false);
     }
@@ -313,11 +351,29 @@ export default function LiveGigsPage() {
 
   const cancelGig = useCallback(async () => {
     const gig = cancelModalGig;
-    if (!gig || cancellingId) return;
+    if (!gig || isCancellingRef.current) return;
+    isCancellingRef.current = true;
     setCancellingId(gig.id);
     setCancelError(null);
     const adminId   = user!.uid;
     const adminName = user!.displayName ?? "Unknown";
+    const localUpdate = {
+      status: "cancelled",
+      cancelledByAdmin: true,
+      cancelledByAdminId: adminId,
+      cancelledByAdminName: adminName,
+      cancellationReason: cancelReason.trim() || undefined,
+      cancellationTicketID: cancelTicketID.trim() || undefined,
+    };
+
+    // Optimistic update — prevents any concurrent fetchLiveGigs from
+    // overwriting with stale Firestore data while the write is in flight.
+    recentlyCancelledRef.current.add(gig.id);
+    setGigs((prev) => prev.map((g) => g.id === gig.id ? { ...g, ...localUpdate } : g));
+    if (detailGig?.id === gig.id) {
+      setDetailGig((prev) => prev ? { ...prev, ...localUpdate } : prev);
+    }
+
     try {
       await updateDoc(doc(db, GIG_COLLECTIONS[gig.gigType], gig.id), {
         status: "cancelled",
@@ -327,18 +383,6 @@ export default function LiveGigsPage() {
         cancellationReason: cancelReason.trim() || null,
         cancellationTicketID: cancelTicketID.trim() || null,
       });
-      const localUpdate = {
-        status: "cancelled",
-        cancelledByAdmin: true,
-        cancelledByAdminId: adminId,
-        cancelledByAdminName: adminName,
-        cancellationReason: cancelReason.trim() || undefined,
-        cancellationTicketID: cancelTicketID.trim() || undefined,
-      };
-      setGigs((prev) => prev.map((g) => g.id === gig.id ? { ...g, ...localUpdate } : g));
-      if (detailGig?.id === gig.id) {
-        setDetailGig((prev) => prev ? { ...prev, ...localUpdate } : prev);
-      }
       await writeLog({
         actorId: adminId,
         actorName: adminName,
@@ -352,6 +396,7 @@ export default function LiveGigsPage() {
           other: {
             gigType: gig.gigType,
             collection: GIG_COLLECTIONS[gig.gigType],
+            previousStatus: gig.status,
             cancelledByAdminId: adminId,
             cancelledByAdminName: adminName,
             cancellationReason: cancelReason.trim() || null,
@@ -361,12 +406,49 @@ export default function LiveGigsPage() {
       });
       setCancelModalGig(null);
     } catch (err) {
+      // Revert optimistic update so the UI reflects the true state.
+      recentlyCancelledRef.current.delete(gig.id);
+      setGigs((prev) => prev.map((g) => g.id === gig.id ? { ...g, status: gig.status, cancelledByAdmin: gig.cancelledByAdmin, cancelledByAdminId: gig.cancelledByAdminId, cancelledByAdminName: gig.cancelledByAdminName, cancellationReason: gig.cancellationReason, cancellationTicketID: gig.cancellationTicketID } : g));
+      if (detailGig?.id === gig.id) {
+        setDetailGig((prev) => prev ? { ...prev, status: gig.status } : prev);
+      }
       console.error("Failed to cancel gig:", err);
       setCancelError(`Failed to cancel "${gig.title || "gig"}". Please try again.`);
+      toast.error(
+        "Cancellation failed",
+        `"${gig.title || "Gig"}" could not be cancelled. The status was not changed.`
+      );
+      try {
+        await writeLog({
+          actorId: adminId,
+          actorName: adminName,
+          actorEmail: user!.email ?? "",
+          module: "gig_management",
+          action: "gig_cancel_failed",
+          description: buildDescription.gigCancelFailed(gig.title || "Untitled Gig", gig.gigType),
+          targetId: gig.id,
+          targetName: gig.title || "Untitled Gig",
+          meta: {
+            other: {
+              error: err instanceof Error ? err.message : String(err),
+              gigType: gig.gigType,
+              collection: GIG_COLLECTIONS[gig.gigType],
+              previousStatus: gig.status,
+              cancelledByAdminId: adminId,
+              cancelledByAdminName: adminName,
+              cancellationReason: cancelReason.trim() || null,
+              cancellationTicketID: cancelTicketID.trim() || null,
+            },
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to log cancel failure:", logErr);
+      }
     } finally {
+      isCancellingRef.current = false;
       setCancellingId(null);
     }
-  }, [cancelModalGig, cancellingId, cancelReason, cancelTicketID, detailGig, user]);
+  }, [cancelModalGig, cancelReason, cancelTicketID, detailGig, user]);
 
   const fetchLiveGigs = useCallback(async () => {
     setLoading(true);
@@ -377,9 +459,14 @@ export default function LiveGigsPage() {
         : [gigTypeFilter];
       const snaps = await Promise.all(types.map((t) => getDocs(collection(db, GIG_COLLECTIONS[t]))));
       const rawGigs = snaps.flatMap((snap, i) =>
-        snap.docs.map((d) => ({ id: d.id, gigType: types[i], ...d.data() }))
+        snap.docs.map((d) => ({ id: d.id, ...d.data(), gigType: types[i] }))
       ) as Omit<Gig, "applications">[];
-      setGigs(rawGigs.map((g) => ({ ...g, applications: [] as Application[] })) as Gig[]);
+      const cancelled = recentlyCancelledRef.current;
+      setGigs(rawGigs.map((g) => {
+        const base = { ...g, applications: [] as Application[] } as Gig;
+        if (cancelled.has(base.id)) base.status = "cancelled";
+        return base;
+      }));
     } catch (err) {
       console.error("Failed to fetch gigs:", err);
       setFetchError("Failed to load gigs. Please try again.");
@@ -500,6 +587,7 @@ export default function LiveGigsPage() {
           })
         )
       );
+      targets.forEach((gig) => recentlyCancelledRef.current.add(gig.id));
       setGigs((prev) =>
         prev.map((g) =>
           crSelectedIds.has(g.id)
@@ -535,6 +623,7 @@ export default function LiveGigsPage() {
               title: g.title || "Untitled Gig",
               gigType: g.gigType,
               collection: GIG_COLLECTIONS[g.gigType],
+              previousStatus: g.status,
             })),
           },
         },
@@ -544,6 +633,40 @@ export default function LiveGigsPage() {
     } catch (err) {
       console.error("CR bulk approve failed:", err);
       setCrBulkError("Some gigs could not be cancelled. Please try again.");
+      toast.error(
+        "Bulk approval failed",
+        `${targets.length} cancellation request${targets.length !== 1 ? "s" : ""} could not be approved. No statuses were changed.`
+      );
+      try {
+        await writeLog({
+          actorId: adminId,
+          actorName: adminName,
+          actorEmail: adminEmail,
+          module: "gig_management",
+          action: "gig_bulk_cancel_failed",
+          description: buildDescription.gigBulkCancelFailed(adminName, targets.length),
+          meta: {
+            other: {
+              error: err instanceof Error ? err.message : String(err),
+              source: "cancellation_requests_tab",
+              totalAttempted: targets.length,
+              cancellationReason: crBulkReason.trim() || null,
+              cancellationTicketID: crBulkTicketID.trim() || "N/A",
+              cancelledByAdminId: adminId,
+              cancelledByAdminName: adminName,
+              gigs: targets.map((g) => ({
+                id: g.id,
+                title: g.title || "Untitled Gig",
+                gigType: g.gigType,
+                collection: GIG_COLLECTIONS[g.gigType],
+                previousStatus: g.status,
+              })),
+            },
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to log CR bulk cancel failure:", logErr);
+      }
     } finally {
       setCrBulkCancelling(false);
     }

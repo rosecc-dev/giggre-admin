@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { CurrencyProvider } from "@/context/CurrencyContext";
+import Toaster from "@/components/ui/Toaster";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,6 +31,7 @@ export default function RootLayout({
           <CurrencyProvider>
             <AuthProvider>{children}</AuthProvider>
           </CurrencyProvider>
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

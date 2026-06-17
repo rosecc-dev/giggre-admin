@@ -248,6 +248,12 @@ export const buildDescription = {
   gigBulkCancelled: (adminName: string, count: number) =>
     `${adminName} bulk-cancelled ${count} gig${count !== 1 ? "s" : ""}`,
 
+  gigCancelFailed: (gigTitle: string, gigType: string) =>
+    `Failed to cancel ${gigType} gig "${gigTitle}" — Firestore write did not complete`,
+
+  gigBulkCancelFailed: (adminName: string, count: number) =>
+    `${adminName} attempted to bulk-cancel ${count} gig${count !== 1 ? "s" : ""} — operation failed`,
+
   // ── Settings ──────────────────────────────────────────────────────────────
 
   settingsUpdated: (section: string) =>
