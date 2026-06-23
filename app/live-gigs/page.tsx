@@ -7,6 +7,7 @@ import Modal from "@/components/ui/Modal";
 import {
   collection,
   getDocs,
+  getDoc,
   Timestamp,
   doc,
   updateDoc,
@@ -124,6 +125,58 @@ function formatFieldValue(val: unknown): string {
   if (typeof val === "string") return val || "—";
   if (Array.isArray(val)) return val.join(", ") || "—";
   return JSON.stringify(val);
+}
+
+async function applyDeclineSuspension(workerId: string): Promise<void> {
+  const _d = new Date();
+  const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
+
+  const userRef = doc(db, "users", workerId);
+  const userSnap = await getDoc(userRef);
+  const userData = userSnap.data() ?? {};
+  const storedDate = userData.decline_count_date as string | undefined;
+  const currentCount = storedDate === today ? ((userData.decline_count as number) ?? 0) : 0;
+  const newDeclineCount = currentCount + 1;
+
+  await updateDoc(userRef, {
+    decline_count: newDeclineCount,
+    decline_count_date: today,
+  });
+
+  const configSnap = await getDoc(doc(db, "quick_gig_config", "decline_suspension"));
+  if (!configSnap.exists()) return;
+  const config = configSnap.data();
+  if (!config.suspension_enabled) return;
+
+  const freeLimit: number = config.free_decline_limit ?? 0;
+  const tierTable: Array<{ decline_count_trigger: number; suspension_duration_minutes: number }> =
+    config.suspension_tier_table ?? [];
+
+  if (newDeclineCount <= freeLimit) return;
+  const declinesOverLimit = newDeclineCount - freeLimit;
+
+  let matchedTier: { decline_count_trigger: number; suspension_duration_minutes: number } | null = null;
+  for (const tier of tierTable) {
+    if (
+      declinesOverLimit >= tier.decline_count_trigger &&
+      (!matchedTier || tier.decline_count_trigger > matchedTier.decline_count_trigger)
+    ) {
+      matchedTier = tier;
+    }
+  }
+  if (!matchedTier) return;
+
+  const newSuspendedUntil = Timestamp.fromMillis(
+    Date.now() + matchedTier.suspension_duration_minutes * 60 * 1000
+  );
+  const existingSuspendedUntil = userData.suspended_until as Timestamp | undefined;
+  if (existingSuspendedUntil && existingSuspendedUntil.toMillis() > newSuspendedUntil.toMillis()) return;
+
+  await updateDoc(userRef, {
+    suspended_until: newSuspendedUntil,
+    seekingQuickGigs: false,
+    slot: "AVAILABLE",
+  });
 }
 
 const GIG_TYPE_LABELS: Record<GigType, string> = {
@@ -383,6 +436,13 @@ export default function LiveGigsPage() {
         cancellationReason: cancelReason.trim() || null,
         cancellationTicketID: cancelTicketID.trim() || null,
       });
+      const cancellationRequestedBy = gig.cancellation_reason?.[0]?.requestedBy;
+      const workerId = (gig.workerId ?? gig.assignedWorkerId) as string | undefined;
+      if (cancellationRequestedBy?.toLowerCase() === "worker" && workerId) {
+        await applyDeclineSuspension(workerId);
+      } else if (cancellationRequestedBy?.toLowerCase() === "worker" && !workerId) {
+        console.warn("[cancelGig] requestedBy=worker but no workerId on gig", gig.id);
+      }
       await writeLog({
         actorId: adminId,
         actorName: adminName,
@@ -586,6 +646,16 @@ export default function LiveGigsPage() {
             cancellationTicketID: crBulkTicketID.trim() || "N/A",
           })
         )
+      );
+      await Promise.all(
+        targets.map((gig) => {
+          const requestedBy = gig.cancellation_reason?.[0]?.requestedBy;
+          const workerId = (gig.workerId ?? gig.assignedWorkerId) as string | undefined;
+          if (requestedBy?.toLowerCase() === "worker" && workerId) {
+            return applyDeclineSuspension(workerId);
+          }
+          return Promise.resolve();
+        })
       );
       targets.forEach((gig) => recentlyCancelledRef.current.add(gig.id));
       setGigs((prev) =>
