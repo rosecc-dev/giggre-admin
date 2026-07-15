@@ -58,6 +58,20 @@ interface UserGig {
   cancelledByAdmin?: boolean;
 }
 
+interface DeleteRequest {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  reason: string | null;
+  status: "pending_deletion" | "approved" | "cancelled" | "completed" | string;
+  deletionScheduledAt: Timestamp | null;
+  createdAt: Timestamp | null;
+  requestedAt: Timestamp | null;
+  deletedAt: Timestamp | null;
+  cancelledAt: Timestamp | null;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface SuspensionTier {
@@ -104,6 +118,8 @@ interface AppUser {
   totalGigs: number;
   lastOnline: Timestamp | null;
   ban_reason: string | null;
+  isDeleted: boolean;
+  deletedAt: Timestamp | null;
 }
 
 type SortField = "createdAt" | "balance" | "name" | "online";
@@ -209,6 +225,8 @@ function toUser(id: string, d: Record<string, any>): AppUser {
     lastOnline:  d.lastOnline instanceof Timestamp ? d.lastOnline : null,
     ban_reason:  typeof d.ban_reason === "string" ? d.ban_reason : null,
     isVerified:  typeof d.isVerified === "string" ? d.isVerified : null,
+    isDeleted:   d.isDeleted   ?? false,
+    deletedAt:   d.deletedAt instanceof Timestamp ? d.deletedAt : null,
   };
 }
 
@@ -491,7 +509,13 @@ const ExpandedRow = memo(function ExpandedRow({
               <span className="exp-value" style={{ color: "var(--text-secondary)" }}>{user.ban_reason}</span>
             </div>
           )}
-          {user.pendingDeletion && user.scheduledDeleteAt && (
+          {user.isDeleted && user.deletedAt && (
+            <div className="exp-field">
+              <span className="exp-label">Deleted At</span>
+              <span className="exp-value" style={{ color: "var(--red)" }}>{formatDate(user.deletedAt)}</span>
+            </div>
+          )}
+          {!user.isDeleted && user.pendingDeletion && user.scheduledDeleteAt && (
             <div className="exp-field">
               <span className="exp-label">Scheduled Deletion</span>
               <span className="exp-value" style={{ color: "var(--red)" }}>{formatDate(user.scheduledDeleteAt)}</span>
@@ -524,47 +548,6 @@ const ExpandedRow = memo(function ExpandedRow({
             View Profile
           </Button>
 
-          {suspended ? (
-            <Button
-              variant="success" size="sm"
-              icon={ShieldCheck}
-              loading={actionLoading === "lift"}
-              onClick={onLiftSuspension}
-            >
-              Lift Suspension
-            </Button>
-          ) : (
-            <Button
-              variant="secondary" size="sm"
-              icon={Clock}
-              loading={actionLoading === "suspend"}
-              onClick={onSuspend}
-              disabled={!canSuspend}
-            >
-              Suspend
-            </Button>
-          )}
-
-          {user.isBanned ? (
-            <Button
-              variant="success" size="sm"
-              icon={ShieldOff}
-              loading={actionLoading === "unban"}
-              onClick={onUnban}
-            >
-              Unban
-            </Button>
-          ) : (
-            <Button
-              variant="danger" size="sm"
-              icon={Ban}
-              loading={actionLoading === "ban"}
-              onClick={onBan}
-            >
-              Ban User
-            </Button>
-          )}
-
           <Button
             variant="secondary" size="sm"
             icon={Briefcase}
@@ -581,26 +564,77 @@ const ExpandedRow = memo(function ExpandedRow({
             Gigs Completed
           </Button>
 
-          {user.pendingDeletion ? (
-            <Button
-              variant="success" size="sm"
-              icon={ShieldCheck}
-              loading={actionLoading === "cancel_deletion"}
-              onClick={onCancelDeletion}
-              style={{ marginLeft: "auto" }}
-            >
-              Cancel Deletion
-            </Button>
-          ) : (
-            <Button
-              variant="danger" size="sm"
-              icon={Trash2}
-              loading={actionLoading === "delete"}
-              onClick={onDelete}
-              style={{ marginLeft: "auto" }}
-            >
-              Delete User
-            </Button>
+          {!user.isDeleted && (
+            <>
+              {suspended ? (
+                <Button
+                  variant="success" size="sm"
+                  icon={ShieldCheck}
+                  loading={actionLoading === "lift"}
+                  onClick={onLiftSuspension}
+                >
+                  Lift Suspension
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary" size="sm"
+                  icon={Clock}
+                  loading={actionLoading === "suspend"}
+                  onClick={onSuspend}
+                  disabled={!canSuspend}
+                >
+                  Suspend
+                </Button>
+              )}
+
+              {user.isBanned ? (
+                <Button
+                  variant="success" size="sm"
+                  icon={ShieldOff}
+                  loading={actionLoading === "unban"}
+                  onClick={onUnban}
+                >
+                  Unban
+                </Button>
+              ) : (
+                <Button
+                  variant="danger" size="sm"
+                  icon={Ban}
+                  loading={actionLoading === "ban"}
+                  onClick={onBan}
+                >
+                  Ban User
+                </Button>
+              )}
+
+              {user.pendingDeletion ? (
+                <Button
+                  variant="success" size="sm"
+                  icon={ShieldCheck}
+                  loading={actionLoading === "cancel_deletion"}
+                  onClick={onCancelDeletion}
+                  style={{ marginLeft: "auto" }}
+                >
+                  Cancel Deletion
+                </Button>
+              ) : (
+                <Button
+                  variant="danger" size="sm"
+                  icon={Trash2}
+                  loading={actionLoading === "delete"}
+                  onClick={onDelete}
+                  style={{ marginLeft: "auto" }}
+                >
+                  Delete User
+                </Button>
+              )}
+            </>
+          )}
+
+          {user.isDeleted && (
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)", fontStyle: "italic" }}>
+              Firebase Auth account removed
+            </span>
           )}
         </div>
 
@@ -648,6 +682,18 @@ export default function UsersPage() {
   const [purgeResult, setPurgeResult]     = useState<{ deleted: { id: string; name: string; email: string }[]; count: number; errors?: { id: string; error: string }[]; error?: string } | null>(null);
   const [purgeModalOpen, setPurgeModalOpen] = useState(false);
   const [verifiedDatesMap, setVerifiedDatesMap] = useState<Record<string, Timestamp | null>>({});
+
+  const [activeTab, setActiveTab] = useState<"active" | "inactive" | "pending_deletion">("active");
+
+  const [deleteRequests, setDeleteRequests] = useState<DeleteRequest[]>([]);
+  const [deleteRequestsLoading, setDeleteRequestsLoading] = useState(false);
+  const [drExpandedId, setDrExpandedId] = useState<string | null>(null);
+  const [drActionLoading, setDrActionLoading] = useState<string | null>(null);
+  const [deleteNowTarget, setDeleteNowTarget] = useState<DeleteRequest | null>(null);
+  const [deleteNowWarning, setDeleteNowWarning] = useState<string | null>(null);
+  const [drSortAsc, setDrSortAsc] = useState(true);
+  // const [drTodayOnly, setDrTodayOnly] = useState(false);
+  const [drStatusFilter, setDrStatusFilter] = useState<"all" | "pending_deletion" | "approved" | "cancelled" | "completed">("all");
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", email: "", phone: "", password: "", role: "user", pendingDeletion: false, scheduledDeleteAt: "" });
@@ -733,6 +779,39 @@ export default function UsersPage() {
       })
       .catch((err) => console.warn("[UsersPage] Failed to load verified dates:", err));
   }, []);
+
+  // ── Fetch pending delete requests ─────────────────────────────────────────
+  useEffect(() => {
+    if (activeTab !== "pending_deletion") return;
+    setDeleteRequestsLoading(true);
+    const q = query(
+      collection(db, "account_delete_requests")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const reqs: DeleteRequest[] = snap.docs.map((d) => {
+        const data = d.data() as Record<string, any>;
+        return {
+          id: d.id,
+          userId: data.userId ?? "",
+          email: data.email ?? "",
+          name: data.name ?? "Unknown",
+          reason: typeof data.reason === "string" ? data.reason : null,
+          status: data.status ?? "pending_deletion",
+          deletionScheduledAt: data.deletionScheduledAt instanceof Timestamp ? data.deletionScheduledAt : null,
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt : null,
+          requestedAt: data.requestedAt instanceof Timestamp ? data.requestedAt : null,
+          deletedAt: data.deletedAt instanceof Timestamp ? data.deletedAt : null,
+          cancelledAt: data.cancelledAt instanceof Timestamp ? data.cancelledAt : null,
+        };
+      }).sort((a, b) => (a.deletionScheduledAt?.toMillis() ?? Infinity) - (b.deletionScheduledAt?.toMillis() ?? Infinity));
+      setDeleteRequests(reqs);
+      setDeleteRequestsLoading(false);
+    }, (err) => {
+      console.error("[UsersPage] delete requests listener error:", err);
+      setDeleteRequestsLoading(false);
+    });
+    return () => unsub();
+  }, [activeTab]);
 
   // ── Real-time listener ────────────────────────────────────────────────────
   useEffect(() => {
@@ -938,6 +1017,69 @@ export default function UsersPage() {
     }
   }, [targetUser, adminUser, closeConfirm]);
 
+  const handleApproveDeleteRequest = useCallback(async (req: DeleteRequest) => {
+    if (!adminUser) return;
+    setDrActionLoading(`approve-${req.id}`);
+    try {
+      await updateDoc(doc(db, "account_delete_requests", req.id), {
+        status: "approved",
+        approvedAt: serverTimestamp(),
+        approvedBy: adminUser.displayName ?? "Admin",
+      });
+      await writeLog({
+        actorId: adminUser.uid,
+        actorName: adminUser.displayName ?? "Unknown",
+        actorEmail: adminUser.email ?? "",
+        module: "user_management",
+        action: "user_deletion_approved",
+        description: `Approved deletion request for ${req.name || req.email}`,
+        targetId: req.userId,
+        targetName: req.name || req.email,
+        affectedFiles: [`users/${req.userId}`, `account_delete_requests/${req.id}`],
+      });
+    } catch (err) {
+      console.error("[UsersPage] approve delete request error:", err);
+    } finally {
+      setDrActionLoading(null);
+    }
+  }, [adminUser]);
+
+  const handleCancelDeleteRequest = useCallback(async (req: DeleteRequest) => {
+    if (!adminUser) return;
+    setDrActionLoading(`cancel-${req.id}`);
+    try {
+      await updateDoc(doc(db, "account_delete_requests", req.id), {
+        status: "cancelled",
+        cancelledAt: serverTimestamp(),
+        cancelledBy: adminUser.displayName ?? "Admin",
+      });
+      const userRef = doc(db, "users", req.userId);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists() && userSnap.data().pendingDeletion) {
+        await updateDoc(userRef, {
+          pendingDeletion: false,
+          scheduledDeleteAt: null,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await writeLog({
+        actorId: adminUser.uid,
+        actorName: adminUser.displayName ?? "Unknown",
+        actorEmail: adminUser.email ?? "",
+        module: "user_management",
+        action: "user_deletion_cancelled",
+        description: buildDescription.userDeletionCancelled(req.name || req.email),
+        targetId: req.userId,
+        targetName: req.name || req.email,
+        affectedFiles: [`users/${req.userId}`, `account_delete_requests/${req.id}`],
+      });
+    } catch (err) {
+      console.error("[UsersPage] cancel delete request error:", err);
+    } finally {
+      setDrActionLoading(null);
+    }
+  }, [adminUser]);
+
   // Dispatch confirm to the right handler
   const handleConfirm = useCallback(() => {
     switch (confirmAction) {
@@ -957,6 +1099,63 @@ export default function UsersPage() {
   }, []);
 
   // ── Manual purge ──────────────────────────────────────────────────────────
+  const handleDeleteNowClick = useCallback((req: DeleteRequest) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const scheduledDate = req.deletionScheduledAt?.toDate() ?? null;
+    const isScheduledToday = scheduledDate ? scheduledDate >= today && scheduledDate <= todayEnd : false;
+    const isOverdue = scheduledDate ? scheduledDate < today : false;
+    const isApproved = req.status === "approved";
+
+    const warnings: string[] = [];
+    if (!isApproved) warnings.push("This request has not been approved yet — the profile may not have been reviewed.");
+    if (!isScheduledToday && !isOverdue) {
+      warnings.push(
+        scheduledDate
+          ? `Deletion is scheduled for ${scheduledDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, not today.`
+          : "No deletion date has been scheduled."
+      );
+    }
+
+    if (warnings.length > 0) {
+      setDeleteNowWarning(warnings.join(" "));
+      setDeleteNowTarget(req);
+    } else {
+      handleDeleteNowRequest(req);
+    }
+  }, []);
+
+  const handleDeleteNowRequest = useCallback(async (req: DeleteRequest) => {
+    if (!adminUser) return;
+    setDeleteNowTarget(null);
+    setDeleteNowWarning(null);
+    setDrActionLoading(`deletenow-${req.id}`);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch("/api/delete-scheduled-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ requestId: req.id }),
+      });
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { deleted: [], count: 0, error: `Server error (${res.status}): ${text.slice(0, 200)}` };
+      }
+      setPurgeResult(data);
+      setPurgeModalOpen(true);
+    } catch (err) {
+      console.error("[UsersPage] delete now error:", err);
+    } finally {
+      setDrActionLoading(null);
+    }
+  }, [adminUser]);
+
   const handleManualPurge = useCallback(async () => {
     setPurgeLoading(true);
     try {
@@ -1044,50 +1243,56 @@ export default function UsersPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let list = q
-      ? users.filter((u) =>
-          u.name.toLowerCase().includes(q) ||
-          u.email.toLowerCase().includes(q) ||
-          u.phone.toLowerCase().includes(q) ||
-          u.userId.toLowerCase().includes(q)
-        )
-      : users;
+    let list = activeTab === "inactive"
+      ? users.filter((u) => u.isDeleted)
+      : users.filter((u) => !u.isDeleted);
 
-    if (newUsersOnly) {
-      list = list.filter((u) => u.createdAt && u.createdAt.toDate() >= sevenDaysAgo);
+    if (q) {
+      list = list.filter((u) =>
+        u.name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        u.phone.toLowerCase().includes(q) ||
+        u.userId.toLowerCase().includes(q)
+      );
     }
 
-    if (joinedFrom || joinedTo) {
-      list = list.filter((u) => {
-        if (!u.createdAt) return false;
-        const d = u.createdAt.toDate();
-        if (joinedFrom) {
-          const from = new Date(joinedFrom);
-          from.setHours(0, 0, 0, 0);
-          if (d < from) return false;
-        }
-        if (joinedTo) {
-          const to = new Date(joinedTo);
-          to.setHours(23, 59, 59, 999);
-          if (d > to) return false;
-        }
-        return true;
-      });
-    }
+    if (activeTab === "active") {
+      if (newUsersOnly) {
+        list = list.filter((u) => u.createdAt && u.createdAt.toDate() >= sevenDaysAgo);
+      }
 
-    if (statusFilter !== "all") {
-      list = list.filter((u) => {
-        const suspended = isCurrentlySuspended(u);
-        switch (statusFilter) {
-          case "online":            return u.isOnline && !u.isBanned && !suspended && !u.pendingDeletion;
-          case "offline":           return !u.isOnline && !u.isBanned && !suspended && !u.pendingDeletion;
-          case "suspended":         return suspended && !u.isBanned && !u.pendingDeletion;
-          case "banned":            return u.isBanned && !u.pendingDeletion;
-          case "pending_deletion":  return u.pendingDeletion;
-          case "verified":          return u.isVerified === "verified";
-          case "unverified":        return u.isVerified !== "verified";
-        }
-      });
+      if (joinedFrom || joinedTo) {
+        list = list.filter((u) => {
+          if (!u.createdAt) return false;
+          const d = u.createdAt.toDate();
+          if (joinedFrom) {
+            const from = new Date(joinedFrom);
+            from.setHours(0, 0, 0, 0);
+            if (d < from) return false;
+          }
+          if (joinedTo) {
+            const to = new Date(joinedTo);
+            to.setHours(23, 59, 59, 999);
+            if (d > to) return false;
+          }
+          return true;
+        });
+      }
+
+      if (statusFilter !== "all") {
+        list = list.filter((u) => {
+          const suspended = isCurrentlySuspended(u);
+          switch (statusFilter) {
+            case "online":            return u.isOnline && !u.isBanned && !suspended && !u.pendingDeletion;
+            case "offline":           return !u.isOnline && !u.isBanned && !suspended && !u.pendingDeletion;
+            case "suspended":         return suspended && !u.isBanned && !u.pendingDeletion;
+            case "banned":            return u.isBanned && !u.pendingDeletion;
+            case "pending_deletion":  return u.pendingDeletion;
+            case "verified":          return u.isVerified === "verified";
+            case "unverified":        return u.isVerified !== "verified";
+          }
+        });
+      }
     }
 
     if (sortField) {
@@ -1113,13 +1318,15 @@ export default function UsersPage() {
       });
     }
     return list;
-  }, [users, search, sortField, sortDir, statusFilter, newUsersOnly, sevenDaysAgo, joinedFrom, joinedTo]);
+  }, [users, search, sortField, sortDir, statusFilter, newUsersOnly, sevenDaysAgo, joinedFrom, joinedTo, activeTab]);
 
   // ── Pagination ────────────────────────────────────────────────────────────
   const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage    = Math.min(page, totalPages);
   const paged       = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-  const onlineCount = users.filter((u) => u.isOnline).length;
+  const activeUsers  = users.filter((u) => !u.isDeleted);
+  const deletedUsers = users.filter((u) => u.isDeleted);
+  const onlineCount  = activeUsers.filter((u) => u.isOnline).length;
 
   const COL_SPAN = 8;
 
@@ -1241,365 +1448,744 @@ export default function UsersPage() {
 
       <div className="up-wrap">
         <div className="up-card">
-          {/* Stats bar */}
-          <div className="up-stats">
-            <div className="up-stat">
-              <Users size={14} style={{ color: "var(--blue)" }} />
-              <span>Total users: <strong>{users.length}</strong></span>
-            </div>
-            <div className="up-stat">
-              <span
-                style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--green)", flexShrink: 0, display: "inline-block" }}
-              />
-              <span>Online: <strong style={{ color: "var(--green)" }}>{onlineCount}</strong></span>
-            </div>
-            {search && (
-              <div className="up-stat" style={{ marginLeft: "auto" }}>
-                <span>{filtered.length} result{filtered.length !== 1 ? "s" : ""} for "{search}"</span>
-              </div>
-            )}
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              {/* <Button
-                variant="primary"
-                size="sm"
-                icon={UserPlus}
-                onClick={() => { setCreateError(null); setCreateModalOpen(true); }}
-              >
-                Create User
-              </Button> */}
-              <Button
-                variant="danger"
-                size="sm"
-                icon={Trash2}
-                loading={purgeLoading}
-                onClick={handleManualPurge}
-              >
-                Run Deletion Now
-              </Button>
-            </div>
-          </div>
-
-          {/* Status filter bar */}
-          <div className="up-filter-bar">
-            {(["all", "online", "offline", "suspended", "banned", "pending_deletion", "verified", "unverified"] as StatusFilter[]).map((f) => {
-              const counts: Record<StatusFilter, number> = {
-                all:              users.length,
-                online:           users.filter((u) => u.isOnline && !u.isBanned && !isCurrentlySuspended(u) && !u.pendingDeletion).length,
-                offline:          users.filter((u) => !u.isOnline && !u.isBanned && !isCurrentlySuspended(u) && !u.pendingDeletion).length,
-                suspended:        users.filter((u) => isCurrentlySuspended(u) && !u.isBanned && !u.pendingDeletion).length,
-                banned:           users.filter((u) => u.isBanned && !u.pendingDeletion).length,
-                pending_deletion: users.filter((u) => u.pendingDeletion).length,
-                verified:         users.filter((u) => u.isVerified === "verified").length,
-                unverified:       users.filter((u) => u.isVerified !== "verified").length,
-              };
-              const labels: Record<StatusFilter, string> = {
-                all: "All", online: "Online", offline: "Offline",
-                suspended: "Suspended", banned: "Banned", pending_deletion: "Pending Deletion",
-                verified: "Verified", unverified: "Unverified",
-              };
-              const colors: Partial<Record<StatusFilter, string>> = {
-                online: "var(--green)", suspended: "var(--orange)", banned: "var(--red)",
-                pending_deletion: "var(--red)", verified: "var(--blue)", unverified: "var(--text-muted)",
-              };
+          {/* Tab switcher */}
+          <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+            {(["active", "inactive", "pending_deletion"] as const).map((tab) => {
+              const label = tab === "active" ? "Active Users" : tab === "inactive" ? "Inactive Users" : "Pending Deletions";
+              const count = tab === "active" ? activeUsers.length : tab === "inactive" ? deletedUsers.length : deleteRequests.filter((r) => r.status === "pending_deletion" || r.status === "approved").length;
+              const isActive = activeTab === tab;
+              const accentColor = tab === "pending_deletion" ? "var(--red)" : "var(--blue)";
+              const accentDim = tab === "pending_deletion" ? "var(--red-dim)" : "var(--blue-dim)";
               return (
                 <button
-                  key={f}
-                  className={`up-filter-btn${statusFilter === f ? " active" : ""}`}
-                  style={statusFilter === f && colors[f] ? { borderColor: colors[f], color: colors[f], background: `color-mix(in srgb, ${colors[f]} 12%, transparent)` } : undefined}
-                  onClick={() => { setStatusFilter(f); setPage(1); }}
+                  key={tab}
+                  onClick={() => { setActiveTab(tab); setPage(1); setStatusFilter("all"); }}
+                  style={{
+                    padding: "11px 18px",
+                    fontSize: 13,
+                    fontWeight: isActive ? 700 : 500,
+                    fontFamily: "inherit",
+                    background: "none",
+                    border: "none",
+                    borderBottom: isActive ? `2px solid ${accentColor}` : "2px solid transparent",
+                    color: isActive ? accentColor : tab === "pending_deletion" && deleteRequests.length > 0 ? "var(--red)" : "var(--text-secondary)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    marginBottom: -1,
+                    transition: "color 0.15s",
+                  }}
                 >
-                  {labels[f]}
-                  <span className="up-filter-count">{counts[f]}</span>
+                  {label}
+                  <span style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    padding: "1px 6px",
+                    borderRadius: 10,
+                    background: isActive ? accentDim : "var(--bg-elevated)",
+                    color: isActive ? accentColor : tab === "pending_deletion" && count > 0 ? "var(--red)" : "var(--text-muted)",
+                    border: "1px solid",
+                    borderColor: isActive ? accentColor : tab === "pending_deletion" && count > 0 ? "rgba(239,68,68,0.3)" : "var(--border)",
+                  }}>
+                    {count}
+                  </span>
                 </button>
               );
             })}
-            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
-            <button
-              className={`up-filter-btn${newUsersOnly ? " active" : ""}`}
-              style={newUsersOnly ? { borderColor: "var(--blue)", color: "var(--blue)", background: "var(--blue-dim)" } : undefined}
-              onClick={() => { setNewUsersOnly((v) => !v); setPage(1); }}
-            >
-              New (7d)
-              <span className="up-filter-count">{newUsersCount}</span>
-            </button>
-            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
-            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, whiteSpace: "nowrap" }}>Joined:</span>
-              <input
-                type="date"
-                value={joinedFrom}
-                max={joinedTo || undefined}
-                onChange={(e) => { setJoinedFrom(e.target.value); setPage(1); }}
-                style={{
-                  padding: "3px 7px", borderRadius: 6, fontSize: 11, fontFamily: "inherit",
-                  border: `1px solid ${joinedFrom ? "var(--blue)" : "var(--border)"}`,
-                  background: joinedFrom ? "var(--blue-dim)" : "var(--bg-elevated)",
-                  color: "var(--text-primary)", outline: "none", cursor: "pointer",
-                }}
-              />
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>→</span>
-              <input
-                type="date"
-                value={joinedTo}
-                min={joinedFrom || undefined}
-                onChange={(e) => { setJoinedTo(e.target.value); setPage(1); }}
-                style={{
-                  padding: "3px 7px", borderRadius: 6, fontSize: 11, fontFamily: "inherit",
-                  border: `1px solid ${joinedTo ? "var(--blue)" : "var(--border)"}`,
-                  background: joinedTo ? "var(--blue-dim)" : "var(--bg-elevated)",
-                  color: "var(--text-primary)", outline: "none", cursor: "pointer",
-                }}
-              />
-              {(joinedFrom || joinedTo) && (
-                <button
-                  onClick={() => { setJoinedFrom(""); setJoinedTo(""); setPage(1); }}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", padding: 0 }}
-                  title="Clear date range"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
           </div>
 
-          {/* Toolbar */}
-          <div className="up-toolbar">
-            <div className="up-search">
-              <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-              <input
-                placeholder="Search by name, email, phone, or user ID…"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              />
-              {search && (
-                <button
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", padding: 0 }}
-                  onClick={() => setSearch("")}
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-            <div className="up-sort-wrap">
-              <span className="up-sort-label">Sort by</span>
-              {(["name", "balance", "createdAt", "online"] as SortField[]).map((f) => (
-                <button
-                  key={f}
-                  className={`up-field-btn${sortField === f ? " active" : ""}`}
-                  onClick={() => handleSortField(f)}
-                >
-                  {SORT_LABELS[f].label}
-                  {sortField === f
-                    ? sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />
-                    : <ArrowUpDown size={10} style={{ opacity: 0.3 }} />}
-                </button>
-              ))}
-
-              {isSorted && (
-                <>
-                  <div className="up-dir-group">
-                    <button
-                      className={`up-dir-btn${sortDir === "asc" ? " active" : ""}`}
-                      onClick={() => handleSortDir("asc")}
-                      title="Ascending"
-                    >
-                      <ChevronUp size={11} />
-                      {sortField ? SORT_LABELS[sortField].asc : "Asc"}
-                    </button>
-                    <button
-                      className={`up-dir-btn${sortDir === "desc" ? " active" : ""}`}
-                      onClick={() => handleSortDir("desc")}
-                      title="Descending"
-                    >
-                      <ChevronDown size={11} />
-                      {sortField ? SORT_LABELS[sortField].desc : "Desc"}
-                    </button>
+          {activeTab !== "pending_deletion" ? (
+            <>
+              {/* Stats bar */}
+              <div className="up-stats">
+                <div className="up-stat">
+                  <Users size={14} style={{ color: "var(--blue)" }} />
+                  <span>Total users: <strong>{activeTab === "inactive" ? deletedUsers.length : activeUsers.length}</strong></span>
+                </div>
+                <div className="up-stat">
+                  <span
+                    style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--green)", flexShrink: 0, display: "inline-block" }}
+                  />
+                  <span>Online: <strong style={{ color: "var(--green)" }}>{onlineCount}</strong></span>
+                </div>
+                {search && (
+                  <div className="up-stat" style={{ marginLeft: "auto" }}>
+                    <span>{filtered.length} result{filtered.length !== 1 ? "s" : ""} for "{search}"</span>
                   </div>
-                  <button className="up-clear-btn" onClick={clearSort} title="Clear sort">
-                    <X size={11} /> Clear
-                  </button>
-                </>
-              )}
-
-              {!isSorted && (
-                <span className="up-sort-hint">No sort applied</span>
-              )}
-            </div>
-          </div>
-
-          {/* Table */}
-          <div style={{ overflowX: "auto" }}>
-            <table className="up-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>User ID</th>
-                  <th>Phone</th>
-                  <th>Balance</th>
-                  <th>Joined</th>
-                  <th>Date Verified</th>
-                  <th>Status</th>
-                  <th style={{ width: 40 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <TableSkeleton />
-                ) : paged.length === 0 ? (
-                  <tr>
-                    <td colSpan={COL_SPAN} className="up-empty">
-                      {search
-                        ? `No users match "${search}". Try a different search.`
-                        : "No users found in the database."}
-                    </td>
-                  </tr>
-                ) : (
-                  paged.map((user) => {
-                    const isOpen   = expandedId === user.id;
-                    const suspended = isCurrentlySuspended(user);
-                    const tier     = getApplicableTier(user.decline_count, suspensionTiers);
-                    const isTarget = targetUser?.id === user.id;
-
-                    const statusBadge = user.pendingDeletion
-                      ? <Badge variant="red" dot>Pending Deletion</Badge>
-                      : user.isBanned
-                        ? <Badge variant="red" dot>Banned</Badge>
-                        : suspended
-                          ? <Badge variant="orange" dot>Suspended</Badge>
-                          : user.isOnline
-                            ? <Badge variant="green" dot>Online</Badge>
-                            : <Badge variant="gray" dot>Offline</Badge>;
-
-                    return (
-                      <Fragment key={user.id}>
-                        <tr className="data-row" onClick={() => setExpandedId(isOpen ? null : user.id)}>
-                          <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                              <div className="up-name">{user.name}</div>
-                              {user.isVerified === "verified" ? (
-                                <span title="Verified" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: "var(--blue)", background: "var(--blue-dim)", borderRadius: 20, padding: "1px 6px", whiteSpace: "nowrap" }}>
-                                  <CheckCircle size={10} />
-                                  Verified
-                                </span>
-                              ) : (
-                                <span title="Unverified" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: "var(--text-muted)", background: "var(--bg-elevated)", borderRadius: 20, padding: "1px 6px", whiteSpace: "nowrap", border: "1px solid var(--border)" }}>
-                                  <ShieldOff size={10} />
-                                  Unverified
-                                </span>
-                              )}
-                              <button className={`copy-btn${copiedKey === `${user.id}-name` ? " copied" : ""}`} title="Copy name" onClick={() => handleCopy(`${user.id}-name`, user.name)}>
-                                {copiedKey === `${user.id}-name` ? <Check size={11} /> : <Copy size={11} />}
-                              </button>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                              <div className="up-sub">{user.email}</div>
-                              <button className={`copy-btn${copiedKey === `${user.id}-email` ? " copied" : ""}`} title="Copy email" onClick={() => handleCopy(`${user.id}-email`, user.email)}>
-                                {copiedKey === `${user.id}-email` ? <Check size={11} /> : <Copy size={11} />}
-                              </button>
-                            </div>
-                          </td>
-                          <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                              <div className="up-sub" style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>{user.userId}</div>
-                              <button className={`copy-btn${copiedKey === `${user.id}-uid` ? " copied" : ""}`} title="Copy user ID" onClick={() => handleCopy(`${user.id}-uid`, user.userId)}>
-                                {copiedKey === `${user.id}-uid` ? <Check size={11} /> : <Copy size={11} />}
-                              </button>
-                            </div>
-                          </td>
-                          <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                              {user.phone}
-                              <button className={`copy-btn${copiedKey === `${user.id}-phone` ? " copied" : ""}`} title="Copy phone" onClick={() => handleCopy(`${user.id}-phone`, user.phone)}>
-                                {copiedKey === `${user.id}-phone` ? <Check size={11} /> : <Copy size={11} />}
-                              </button>
-                            </div>
-                          </td>
-                          <td style={{ fontWeight: 600, color: "var(--text-primary)" }}>
-                            {formatBalance(user.balance, symbol)}
-                          </td>
-                          <td>{formatDate(user.createdAt)}</td>
-                          <td>{formatDate(verifiedDatesMap[user.userId] ?? null)}</td>
-                          <td>
-                            {statusBadge}
-                          </td>
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <button
-                              className={`expand-btn${isOpen ? " open" : ""}`}
-                              title={isOpen ? "Collapse" : "Expand details"}
-                              onClick={() => setExpandedId(isOpen ? null : user.id)}
-                            >
-                              {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                            </button>
-                          </td>
-                        </tr>
-                        {isOpen && (
-                          <ExpandedRow
-                            key={`exp-${user.id}`}
-                            user={user}
-                            colSpan={COL_SPAN}
-                            applicableTier={tier}
-                            suspended={suspended}
-                            canSuspend={user.decline_count > 0 && !user.isBanned}
-                            onViewProfile={() => router.push(`/users/${user.id}`)}
-                            onSuspend={() => { setTargetUser(user); setSuspendModalOpen(true); }}
-                            onLiftSuspension={() => openConfirm("lift", user)}
-                            onBan={() => openConfirm("ban", user)}
-                            onUnban={() => openConfirm("unban", user)}
-                            onDelete={() => openConfirm("delete", user)}
-                            onCancelDeletion={() => openConfirm("cancel_deletion", user)}
-                            actionLoading={isTarget ? actionLoading : null}
-                            onViewGigs={() => {
-                              setGigsModalUser(user);
-                              fetchUserGigs(user.id);
-                            }}
-                            onViewWorkedGigs={() => {
-                              setWorkedGigsModalUser(user);
-                              fetchWorkedGigs(user.id);
-                            }}
-                          />
-                        )}
-                      </Fragment>
-                    );
-                  })
                 )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {!loading && (
-            <div className="up-pg">
-              <span className="up-pg-info">
-                {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length} users
-              </span>
-              <div className="up-pg-btns">
-                <button className="up-pg-btn" onClick={() => setPage(1)} disabled={safePage === 1}>«</button>
-                <button className="up-pg-btn" onClick={() => setPage((p) => p - 1)} disabled={safePage === 1}>‹</button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter((p) => Math.abs(p - safePage) <= 2 || p === 1 || p === totalPages)
-                  .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                    if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((p, i) =>
-                    p === "…" ? (
-                      <span key={`e${i}`} style={{ padding: "0 4px", color: "var(--text-muted)", fontSize: 12 }}>…</span>
-                    ) : (
-                      <button
-                        key={p}
-                        className={`up-pg-btn${p === safePage ? " active" : ""}`}
-                        onClick={() => setPage(p as number)}
-                        disabled={p === safePage}
-                      >
-                        {p}
-                      </button>
-                    )
-                  )}
-                <button className="up-pg-btn" onClick={() => setPage((p) => p + 1)} disabled={safePage === totalPages}>›</button>
-                <button className="up-pg-btn" onClick={() => setPage(totalPages)} disabled={safePage === totalPages}>»</button>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  {/* <Button
+                    variant="primary"
+                    size="sm"
+                    icon={UserPlus}
+                    onClick={() => { setCreateError(null); setCreateModalOpen(true); }}
+                  >
+                    Create User
+                  </Button> */}
+                </div>
               </div>
-            </div>
+
+              {/* Status filter bar — active tab only */}
+              {activeTab === "active" && <div className="up-filter-bar">
+                {(["all", "online", "offline", "suspended", "banned", "pending_deletion", "verified", "unverified"] as StatusFilter[]).map((f) => {
+                  const counts: Record<StatusFilter, number> = {
+                    all:              activeUsers.length,
+                    online:           activeUsers.filter((u) => u.isOnline && !u.isBanned && !isCurrentlySuspended(u) && !u.pendingDeletion).length,
+                    offline:          activeUsers.filter((u) => !u.isOnline && !u.isBanned && !isCurrentlySuspended(u) && !u.pendingDeletion).length,
+                    suspended:        activeUsers.filter((u) => isCurrentlySuspended(u) && !u.isBanned && !u.pendingDeletion).length,
+                    banned:           activeUsers.filter((u) => u.isBanned && !u.pendingDeletion).length,
+                    pending_deletion: activeUsers.filter((u) => u.pendingDeletion).length,
+                    verified:         activeUsers.filter((u) => u.isVerified === "verified").length,
+                    unverified:       activeUsers.filter((u) => u.isVerified !== "verified").length,
+                  };
+                  const labels: Record<StatusFilter, string> = {
+                    all: "All", online: "Online", offline: "Offline",
+                    suspended: "Suspended", banned: "Banned", pending_deletion: "Pending Deletion",
+                    verified: "Verified", unverified: "Unverified",
+                  };
+                  const colors: Partial<Record<StatusFilter, string>> = {
+                    online: "var(--green)", suspended: "var(--orange)", banned: "var(--red)",
+                    pending_deletion: "var(--red)", verified: "var(--blue)", unverified: "var(--text-muted)",
+                  };
+                  return (
+                    <button
+                      key={f}
+                      className={`up-filter-btn${statusFilter === f ? " active" : ""}`}
+                      style={statusFilter === f && colors[f] ? { borderColor: colors[f], color: colors[f], background: `color-mix(in srgb, ${colors[f]} 12%, transparent)` } : undefined}
+                      onClick={() => { setStatusFilter(f); setPage(1); }}
+                    >
+                      {labels[f]}
+                      <span className="up-filter-count">{counts[f]}</span>
+                    </button>
+                  );
+                })}
+                <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
+                <button
+                  className={`up-filter-btn${newUsersOnly ? " active" : ""}`}
+                  style={newUsersOnly ? { borderColor: "var(--blue)", color: "var(--blue)", background: "var(--blue-dim)" } : undefined}
+                  onClick={() => { setNewUsersOnly((v) => !v); setPage(1); }}
+                >
+                  New (7d)
+                  <span className="up-filter-count">{newUsersCount}</span>
+                </button>
+                <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px", flexShrink: 0 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, whiteSpace: "nowrap" }}>Joined:</span>
+                  <input
+                    type="date"
+                    value={joinedFrom}
+                    max={joinedTo || undefined}
+                    onChange={(e) => { setJoinedFrom(e.target.value); setPage(1); }}
+                    style={{
+                      padding: "3px 7px", borderRadius: 6, fontSize: 11, fontFamily: "inherit",
+                      border: `1px solid ${joinedFrom ? "var(--blue)" : "var(--border)"}`,
+                      background: joinedFrom ? "var(--blue-dim)" : "var(--bg-elevated)",
+                      color: "var(--text-primary)", outline: "none", cursor: "pointer",
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>→</span>
+                  <input
+                    type="date"
+                    value={joinedTo}
+                    min={joinedFrom || undefined}
+                    onChange={(e) => { setJoinedTo(e.target.value); setPage(1); }}
+                    style={{
+                      padding: "3px 7px", borderRadius: 6, fontSize: 11, fontFamily: "inherit",
+                      border: `1px solid ${joinedTo ? "var(--blue)" : "var(--border)"}`,
+                      background: joinedTo ? "var(--blue-dim)" : "var(--bg-elevated)",
+                      color: "var(--text-primary)", outline: "none", cursor: "pointer",
+                    }}
+                  />
+                  {(joinedFrom || joinedTo) && (
+                    <button
+                      onClick={() => { setJoinedFrom(""); setJoinedTo(""); setPage(1); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", padding: 0 }}
+                      title="Clear date range"
+                    >
+                      <X size={11} />
+                    </button>
+                  )}
+                </div>
+              </div>}
+
+              {/* Toolbar */}
+              <div className="up-toolbar">
+                <div className="up-search">
+                  <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                  <input
+                    placeholder="Search by name, email, phone, or user ID…"
+                    value={search}
+                    onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                  />
+                  {search && (
+                    <button
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", display: "flex", padding: 0 }}
+                      onClick={() => setSearch("")}
+                    >
+                      <X size={11} />
+                    </button>
+                  )}
+                </div>
+                <div className="up-sort-wrap">
+                  <span className="up-sort-label">Sort by</span>
+                  {(["name", "balance", "createdAt", "online"] as SortField[]).map((f) => (
+                    <button
+                      key={f}
+                      className={`up-field-btn${sortField === f ? " active" : ""}`}
+                      onClick={() => handleSortField(f)}
+                    >
+                      {SORT_LABELS[f].label}
+                      {sortField === f
+                        ? sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />
+                        : <ArrowUpDown size={10} style={{ opacity: 0.3 }} />}
+                    </button>
+                  ))}
+
+                  {isSorted && (
+                    <>
+                      <div className="up-dir-group">
+                        <button
+                          className={`up-dir-btn${sortDir === "asc" ? " active" : ""}`}
+                          onClick={() => handleSortDir("asc")}
+                          title="Ascending"
+                        >
+                          <ChevronUp size={11} />
+                          {sortField ? SORT_LABELS[sortField].asc : "Asc"}
+                        </button>
+                        <button
+                          className={`up-dir-btn${sortDir === "desc" ? " active" : ""}`}
+                          onClick={() => handleSortDir("desc")}
+                          title="Descending"
+                        >
+                          <ChevronDown size={11} />
+                          {sortField ? SORT_LABELS[sortField].desc : "Desc"}
+                        </button>
+                      </div>
+                      <button className="up-clear-btn" onClick={clearSort} title="Clear sort">
+                        <X size={11} /> Clear
+                      </button>
+                    </>
+                  )}
+
+                  {!isSorted && (
+                    <span className="up-sort-hint">No sort applied</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Table */}
+              <div style={{ overflowX: "auto" }}>
+                <table className="up-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>User ID</th>
+                      <th>Phone</th>
+                      <th>Balance</th>
+                      <th>Joined</th>
+                      <th>Date Verified</th>
+                      <th>Status</th>
+                      <th style={{ width: 40 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <TableSkeleton />
+                    ) : paged.length === 0 ? (
+                      <tr>
+                        <td colSpan={COL_SPAN} className="up-empty">
+                          {search
+                            ? `No users match "${search}". Try a different search.`
+                            : "No users found in the database."}
+                        </td>
+                      </tr>
+                    ) : (
+                      paged.map((user) => {
+                        const isOpen   = expandedId === user.id;
+                        const suspended = isCurrentlySuspended(user);
+                        const tier     = getApplicableTier(user.decline_count, suspensionTiers);
+                        const isTarget = targetUser?.id === user.id;
+
+                        const statusBadge = user.isDeleted
+                          ? <Badge variant="red" dot>Deleted</Badge>
+                          : user.pendingDeletion
+                            ? <Badge variant="red" dot>Pending Deletion</Badge>
+                            : user.isBanned
+                              ? <Badge variant="red" dot>Banned</Badge>
+                              : suspended
+                                ? <Badge variant="orange" dot>Suspended</Badge>
+                                : user.isOnline
+                                  ? <Badge variant="green" dot>Online</Badge>
+                                  : <Badge variant="gray" dot>Offline</Badge>;
+
+                        return (
+                          <Fragment key={user.id}>
+                            <tr className="data-row" onClick={() => setExpandedId(isOpen ? null : user.id)}>
+                              <td>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <div className="up-name">{user.name}</div>
+                                  {user.isVerified === "verified" ? (
+                                    <span title="Verified" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: "var(--blue)", background: "var(--blue-dim)", borderRadius: 20, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                                      <CheckCircle size={10} />
+                                      Verified
+                                    </span>
+                                  ) : (
+                                    <span title="Unverified" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: "var(--text-muted)", background: "var(--bg-elevated)", borderRadius: 20, padding: "1px 6px", whiteSpace: "nowrap", border: "1px solid var(--border)" }}>
+                                      <ShieldOff size={10} />
+                                      Unverified
+                                    </span>
+                                  )}
+                                  <button className={`copy-btn${copiedKey === `${user.id}-name` ? " copied" : ""}`} title="Copy name" onClick={() => handleCopy(`${user.id}-name`, user.name)}>
+                                    {copiedKey === `${user.id}-name` ? <Check size={11} /> : <Copy size={11} />}
+                                  </button>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <div className="up-sub">{user.email}</div>
+                                  <button className={`copy-btn${copiedKey === `${user.id}-email` ? " copied" : ""}`} title="Copy email" onClick={() => handleCopy(`${user.id}-email`, user.email)}>
+                                    {copiedKey === `${user.id}-email` ? <Check size={11} /> : <Copy size={11} />}
+                                  </button>
+                                </div>
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <div className="up-sub" style={{ fontFamily: "monospace", fontSize: "0.75rem" }}>{user.userId}</div>
+                                  <button className={`copy-btn${copiedKey === `${user.id}-uid` ? " copied" : ""}`} title="Copy user ID" onClick={() => handleCopy(`${user.id}-uid`, user.userId)}>
+                                    {copiedKey === `${user.id}-uid` ? <Check size={11} /> : <Copy size={11} />}
+                                  </button>
+                                </div>
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  {user.phone}
+                                  <button className={`copy-btn${copiedKey === `${user.id}-phone` ? " copied" : ""}`} title="Copy phone" onClick={() => handleCopy(`${user.id}-phone`, user.phone)}>
+                                    {copiedKey === `${user.id}-phone` ? <Check size={11} /> : <Copy size={11} />}
+                                  </button>
+                                </div>
+                              </td>
+                              <td style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                                {formatBalance(user.balance, symbol)}
+                              </td>
+                              <td>{formatDate(user.createdAt)}</td>
+                              <td>{formatDate(verifiedDatesMap[user.userId] ?? null)}</td>
+                              <td>
+                                {statusBadge}
+                              </td>
+                              <td onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  className={`expand-btn${isOpen ? " open" : ""}`}
+                                  title={isOpen ? "Collapse" : "Expand details"}
+                                  onClick={() => setExpandedId(isOpen ? null : user.id)}
+                                >
+                                  {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                </button>
+                              </td>
+                            </tr>
+                            {isOpen && (
+                              <ExpandedRow
+                                key={`exp-${user.id}`}
+                                user={user}
+                                colSpan={COL_SPAN}
+                                applicableTier={tier}
+                                suspended={suspended}
+                                canSuspend={user.decline_count > 0 && !user.isBanned}
+                                onViewProfile={() => router.push(`/users/${user.id}`)}
+                                onSuspend={() => { setTargetUser(user); setSuspendModalOpen(true); }}
+                                onLiftSuspension={() => openConfirm("lift", user)}
+                                onBan={() => openConfirm("ban", user)}
+                                onUnban={() => openConfirm("unban", user)}
+                                onDelete={() => openConfirm("delete", user)}
+                                onCancelDeletion={() => openConfirm("cancel_deletion", user)}
+                                actionLoading={isTarget ? actionLoading : null}
+                                onViewGigs={() => {
+                                  setGigsModalUser(user);
+                                  fetchUserGigs(user.id);
+                                }}
+                                onViewWorkedGigs={() => {
+                                  setWorkedGigsModalUser(user);
+                                  fetchWorkedGigs(user.id);
+                                }}
+                              />
+                            )}
+                          </Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {!loading && (
+                <div className="up-pg">
+                  <span className="up-pg-info">
+                    {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length} users
+                  </span>
+                  <div className="up-pg-btns">
+                    <button className="up-pg-btn" onClick={() => setPage(1)} disabled={safePage === 1}>«</button>
+                    <button className="up-pg-btn" onClick={() => setPage((p) => p - 1)} disabled={safePage === 1}>‹</button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .filter((p) => Math.abs(p - safePage) <= 2 || p === 1 || p === totalPages)
+                      .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                        if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+                        acc.push(p);
+                        return acc;
+                      }, [])
+                      .map((p, i) =>
+                        p === "…" ? (
+                          <span key={`e${i}`} style={{ padding: "0 4px", color: "var(--text-muted)", fontSize: 12 }}>…</span>
+                        ) : (
+                          <button
+                            key={p}
+                            className={`up-pg-btn${p === safePage ? " active" : ""}`}
+                            onClick={() => setPage(p as number)}
+                            disabled={p === safePage}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+                    <button className="up-pg-btn" onClick={() => setPage((p) => p + 1)} disabled={safePage === totalPages}>›</button>
+                    <button className="up-pg-btn" onClick={() => setPage(totalPages)} disabled={safePage === totalPages}>»</button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Pending deletion stats bar */}
+              <div className="up-stats">
+                <div className="up-stat">
+                  <AlertTriangle size={14} style={{ color: "var(--red)" }} />
+                  <span>Total: <strong>{deleteRequests.filter((r) => r.status === "pending_deletion" || r.status === "approved").length}</strong></span>
+                </div>
+                <button
+                  className="up-filter-btn"
+                  onClick={() => setDrSortAsc((v) => !v)}
+                  style={{ display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  Scheduled Date
+                  {drSortAsc ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+                {/* Status filter */}
+                {(["all", "pending_deletion", "approved", "cancelled", "completed"] as const).map((s) => {
+                  const count = s === "all" ? deleteRequests.length : deleteRequests.filter((r) => r.status === s).length;
+                  const label = s === "all" ? "All" : s === "pending_deletion" ? "Pending" : s === "approved" ? "Approved" : s === "cancelled" ? "Cancelled" : "Completed";
+                  const isActive = drStatusFilter === s;
+                  return (
+                    <button
+                      key={s}
+                      className={`up-filter-btn${isActive ? " active" : ""}`}
+                      style={isActive ? { borderColor: "var(--red)", color: "var(--red)", background: "var(--red-dim)" } : undefined}
+                      onClick={() => setDrStatusFilter(s)}
+                    >
+                      {label}
+                      <span className="up-filter-count">{count}</span>
+                    </button>
+                  );
+                })}
+                {/* Today filter */}
+                {/* {(() => {
+                  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+                  const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+                  const todayCount = deleteRequests.filter((r) => {
+                    const d = r.deletionScheduledAt?.toDate();
+                    return d && d >= todayStart && d <= todayEnd;
+                  }).length;
+                  return (
+                    <button
+                      className={`up-filter-btn${drTodayOnly ? " active" : ""}`}
+                      style={drTodayOnly ? { borderColor: "var(--red)", color: "var(--red)", background: "var(--red-dim)" } : undefined}
+                      onClick={() => setDrTodayOnly((v) => !v)}
+                    >
+                      Scheduled Today
+                      <span className="up-filter-count">{todayCount}</span>
+                    </button>
+                  );
+                })()} */}
+                <div className="up-stat" style={{ marginLeft: "auto", gap: 12 }}>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    Approve marks the request for deletion. Cancel restores the account.
+                  </span>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={Trash2}
+                    loading={purgeLoading}
+                    onClick={handleManualPurge}
+                  >
+                    Run Deletion Now
+                  </Button>
+                </div>
+              </div>
+
+              {deleteRequestsLoading ? (
+                <div style={{ padding: "40px 24px", textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>
+                  Loading deletion requests…
+                </div>
+              ) : deleteRequests.length === 0 ? (
+                <div style={{ padding: "52px 24px", textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>
+                  No deletion requests found.
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="up-table">
+                    <thead>
+                      <tr>
+                        <th>User</th>
+                        <th>Reason</th>
+                        <th>Requested</th>
+                        <th>Scheduled Deletion</th>
+                        <th>Time Remaining</th>
+                        <th>Active Gigs</th>
+                        <th style={{ width: 40 }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...deleteRequests]
+                        .filter((r) => drStatusFilter === "all" || r.status === drStatusFilter)
+                        .sort((a, b) => {
+                          const aMs = a.deletionScheduledAt?.toDate().getTime() ?? 0;
+                          const bMs = b.deletionScheduledAt?.toDate().getTime() ?? 0;
+                          return drSortAsc ? aMs - bMs : bMs - aMs;
+                        }).map((req) => {
+                        const isExpanded = drExpandedId === req.id;
+                        const matchedUser = users.find((u) => u.id === req.userId);
+                        const hostedGigs = userGigsMap[req.userId] ?? null;
+                        const workedGigs = workedGigsMap[req.userId] ?? null;
+                        const activeHosted = hostedGigs?.filter((g) => !["completed","cancelled","canceled","expired"].includes(g.status?.toLowerCase() ?? "")) ?? [];
+                        const activeWorked = workedGigs?.filter((g) => !["completed","cancelled","canceled","expired"].includes(g.status?.toLowerCase() ?? "")) ?? [];
+                        const gigsLoaded = hostedGigs !== null && workedGigs !== null;
+                        const gigsLoading = gigsLoadingId === req.userId || workedGigsLoadingId === req.userId;
+                        const totalActiveGigs = activeHosted.length + activeWorked.length;
+                        const hasBlockers = gigsLoaded && totalActiveGigs > 0;
+                        const now = Date.now();
+                        const scheduledMs = req.deletionScheduledAt?.toDate().getTime() ?? null;
+                        const timeRemaining = scheduledMs != null ? (() => {
+                          const diff = scheduledMs - now;
+                          if (diff <= 0) return <span style={{ color: "var(--red)", fontWeight: 600 }}>Overdue</span>;
+                          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                          const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                          return <span style={{ color: days < 3 ? "var(--orange,#f97316)" : "var(--text-secondary)" }}>{days > 0 ? `${days}d ${hours}h` : `${hours}h`}</span>;
+                        })() : <span style={{ color: "var(--text-muted)" }}>—</span>;
+
+                        const approveLoadingKey = `approve-${req.id}`;
+                        const cancelLoadingKey = `cancel-${req.id}`;
+
+                        return (
+                          <Fragment key={req.id}>
+                            <tr
+                              className="data-row"
+                              onClick={() => {
+                                setDrExpandedId(isExpanded ? null : req.id);
+                                if (!gigsLoaded && !gigsLoading) {
+                                  fetchUserGigs(req.userId);
+                                  fetchWorkedGigs(req.userId);
+                                }
+                              }}
+                            >
+                              <td>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                                  <span style={{
+                                    fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
+                                    background: req.status === "pending_deletion" ? "rgba(239,68,68,0.12)" : req.status === "approved" ? "rgba(249,115,22,0.12)" : req.status === "completed" ? "rgba(34,197,94,0.12)" : "rgba(156,163,175,0.15)",
+                                    color: req.status === "pending_deletion" ? "var(--red)" : req.status === "approved" ? "var(--orange,#f97316)" : req.status === "completed" ? "var(--green)" : "var(--text-muted)",
+                                    whiteSpace: "nowrap",
+                                  }}>
+                                    {req.status === "pending_deletion" ? "Pending" : req.status === "approved" ? "Approved" : req.status === "completed" ? "Deleted" : "Cancelled"}
+                                  </span>
+                                </div>
+                                <div className="up-sub">{req.email}</div>
+                                {matchedUser && (
+                                  <div className="up-sub" style={{ fontFamily: "monospace", fontSize: "0.7rem" }}>{req.userId}</div>
+                                )}
+                              </td>
+                              <td style={{ color: "var(--text-secondary)", fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {req.reason || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No reason provided</span>}
+                              </td>
+                              <td style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                                {req.requestedAt ? req.requestedAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                              </td>
+                              <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                                {req.deletionScheduledAt
+                                  ? req.deletionScheduledAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                                  : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                              </td>
+                              <td style={{ fontSize: 12 }}>{timeRemaining}</td>
+                              <td style={{ fontSize: 12 }}>
+                                {gigsLoading ? (
+                                  <span style={{ color: "var(--text-muted)" }}>Checking…</span>
+                                ) : gigsLoaded ? (
+                                  totalActiveGigs > 0 ? (
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--orange,#f97316)", fontWeight: 600 }}>
+                                      <AlertTriangle size={12} /> {totalActiveGigs} active
+                                    </span>
+                                  ) : (
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--green)", fontWeight: 600 }}>
+                                      <CheckCircle size={12} /> No blockers
+                                    </span>
+                                  )
+                                ) : (
+                                  <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>—</span>
+                                )}
+                              </td>
+                              <td onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  className={`expand-btn${isExpanded ? " open" : ""}`}
+                                  onClick={() => {
+                                    setDrExpandedId(isExpanded ? null : req.id);
+                                    if (!gigsLoaded && !gigsLoading) {
+                                      fetchUserGigs(req.userId);
+                                      fetchWorkedGigs(req.userId);
+                                    }
+                                  }}
+                                >
+                                  {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                </button>
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan={7} style={{ padding: 0, background: "var(--bg-elevated)" }}>
+                                  <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)" }}>
+                                    {/* Gig blockers section */}
+                                    <div style={{ marginBottom: 16 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 10 }}>
+                                        Active Gig Blockers
+                                      </div>
+                                      {gigsLoading ? (
+                                        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Checking for active gigs…</div>
+                                      ) : !gigsLoaded ? (
+                                        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</div>
+                                      ) : totalActiveGigs === 0 ? (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--green)", fontWeight: 600 }}>
+                                          <CheckCircle size={14} /> No active gigs. Safe to delete.
+                                        </div>
+                                      ) : (
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                          {hasBlockers && (
+                                            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.25)", borderRadius: "var(--radius-sm)", fontSize: 12, color: "var(--orange,#f97316)", fontWeight: 600, marginBottom: 6 }}>
+                                              <AlertTriangle size={13} /> This user has {totalActiveGigs} active gig{totalActiveGigs !== 1 ? "s" : ""}. Deleting now may affect ongoing transactions.
+                                            </div>
+                                          )}
+                                          {activeHosted.length > 0 && (
+                                            <div>
+                                              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, marginBottom: 4 }}>As Host ({activeHosted.length})</div>
+                                              {activeHosted.slice(0, 5).map((g) => (
+                                                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 6, marginBottom: 4, fontSize: 12 }}>
+                                                  <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 20, background: "rgba(249,115,22,0.12)", color: "var(--orange,#f97316)", whiteSpace: "nowrap" }}>{GIG_TYPE_LABELS[g.gigType]}</span>
+                                                  <span style={{ flex: 1, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.title || "Untitled"}</span>
+                                                  <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{g.status}</span>
+                                                </div>
+                                              ))}
+                                              {activeHosted.length > 5 && <div style={{ fontSize: 11, color: "var(--text-muted)", padding: "2px 10px" }}>+{activeHosted.length - 5} more</div>}
+                                            </div>
+                                          )}
+                                          {activeWorked.length > 0 && (
+                                            <div>
+                                              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, marginBottom: 4 }}>As Worker ({activeWorked.length})</div>
+                                              {activeWorked.slice(0, 5).map((g) => (
+                                                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 6, marginBottom: 4, fontSize: 12 }}>
+                                                  <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 20, background: "rgba(59,130,246,0.12)", color: "var(--blue)", whiteSpace: "nowrap" }}>{GIG_TYPE_LABELS[g.gigType]}</span>
+                                                  <span style={{ flex: 1, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.title || "Untitled"}</span>
+                                                  <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{g.status}</span>
+                                                </div>
+                                              ))}
+                                              {activeWorked.length > 5 && <div style={{ fontSize: 11, color: "var(--text-muted)", padding: "2px 10px" }}>+{activeWorked.length - 5} more</div>}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                      {matchedUser && (
+                                        <Button variant="secondary" size="sm" icon={ExternalLink} onClick={() => router.push(`/users/${req.userId}`)}>
+                                          View Profile
+                                        </Button>
+                                      )}
+                                      {req.status === "pending_deletion" ? (
+                                        <>
+                                          <Button
+                                            variant="secondary"
+                                            size="sm"
+                                            icon={CheckCircle}
+                                            loading={drActionLoading === approveLoadingKey}
+                                            disabled={drActionLoading !== null}
+                                            onClick={() => handleApproveDeleteRequest(req)}
+                                          >
+                                            Approve
+                                          </Button>
+                                          <Button
+                                            variant="danger"
+                                            size="sm"
+                                            icon={Trash2}
+                                            loading={drActionLoading === `deletenow-${req.id}`}
+                                            disabled={drActionLoading !== null}
+                                            onClick={() => handleDeleteNowClick(req)}
+                                          >
+                                            {hasBlockers ? "Delete Now (has blockers)" : "Delete Now"}
+                                          </Button>
+                                          <Button
+                                            variant="success"
+                                            size="sm"
+                                            icon={ShieldCheck}
+                                            loading={drActionLoading === cancelLoadingKey}
+                                            disabled={drActionLoading !== null}
+                                            onClick={() => handleCancelDeleteRequest(req)}
+                                          >
+                                            Cancel Request
+                                          </Button>
+                                        </>
+                                      ) : req.status === "approved" ? (
+                                        <>
+                                          <Button
+                                            variant="danger"
+                                            size="sm"
+                                            icon={Trash2}
+                                            loading={drActionLoading === `deletenow-${req.id}`}
+                                            disabled={drActionLoading !== null}
+                                            onClick={() => handleDeleteNowClick(req)}
+                                          >
+                                            {hasBlockers ? "Delete Now (has blockers)" : "Delete Now"}
+                                          </Button>
+                                          <Button
+                                            variant="success"
+                                            size="sm"
+                                            icon={ShieldCheck}
+                                            loading={drActionLoading === cancelLoadingKey}
+                                            disabled={drActionLoading !== null}
+                                            onClick={() => handleCancelDeleteRequest(req)}
+                                          >
+                                            Cancel Request
+                                          </Button>
+                                        </>
+                                      ) : (
+                                        <span style={{
+                                          fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+                                          background: req.status === "completed" ? "rgba(34,197,94,0.12)" : "rgba(156,163,175,0.15)",
+                                          color: req.status === "completed" ? "var(--green)" : "var(--text-muted)",
+                                          textTransform: "capitalize",
+                                        }}>
+                                          {req.status === "completed" ? "Deleted" : "Cancelled"}
+                                          {req.status === "completed" && req.deletedAt ? ` · ${req.deletedAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+                                          {req.status === "cancelled" && req.cancelledAt ? ` · ${req.cancelledAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1615,6 +2201,19 @@ export default function UsersPage() {
       />
 
       {/* Confirm dialogs */}
+      {deleteNowTarget && (
+        <ConfirmDialog
+          open
+          onClose={() => { setDeleteNowTarget(null); setDeleteNowWarning(null); }}
+          onConfirm={() => handleDeleteNowRequest(deleteNowTarget)}
+          title="Delete User Now?"
+          message={deleteNowWarning ?? ""}
+          confirmLabel="Delete Anyway"
+          danger
+          loading={drActionLoading === `deletenow-${deleteNowTarget.id}`}
+        />
+      )}
+
       {confirmAction && (
         <ConfirmDialog
           open

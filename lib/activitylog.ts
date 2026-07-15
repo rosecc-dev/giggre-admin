@@ -36,6 +36,7 @@ export type UserLogAction =
   | "user_skills_updated"
   | "user_host_reward_skills_updated"
   | "user_deletion_scheduled"
+  | "user_deletion_approved"
   | "user_deletion_cancelled";
 
 export type GigLogAction =

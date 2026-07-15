@@ -13,7 +13,6 @@ import {
   collection,
   getDocs,
   getDoc,
-  deleteDoc,
   query,
   where,
   updateDoc,
@@ -64,6 +63,8 @@ interface UserDoc {
   // Status
   suspended_until: Timestamp | null;
   isBanned: boolean;
+  pendingDeletion: boolean;
+  scheduledDeleteAt: Timestamp | null;
   ban_reason: string | null;
   // Skills (legacy array)
   skills: string[];
@@ -187,6 +188,8 @@ function toUserDoc(id: string, d: Record<string, any>): UserDoc {
     location:          d.location instanceof GeoPoint ? d.location : null,
     suspended_until:   d.suspended_until instanceof Timestamp ? d.suspended_until : null,
     isBanned:          d.isBanned          ?? false,
+    pendingDeletion:   d.pendingDeletion   ?? false,
+    scheduledDeleteAt: d.scheduledDeleteAt instanceof Timestamp ? d.scheduledDeleteAt : null,
     lastOnline: d.lastOnline instanceof Timestamp ? d.lastOnline : null,
     ban_reason:        typeof d.ban_reason === "string" ? d.ban_reason : null,
     skills:            Array.isArray(d.skills)   ? d.skills   : [],
@@ -695,7 +698,7 @@ function getApplicableTier(declineCount: number, tiers: SuspensionTier[]): Suspe
   );
 }
 
-type ConfirmAction = "ban" | "unban" | "lift" | "delete" | null;
+type ConfirmAction = "ban" | "unban" | "lift" | "delete" | "cancel_deletion" | null;
 
 // ─── Suspend Modal ────────────────────────────────────────────────────────────
 
@@ -861,7 +864,7 @@ export default function UserProfilePage() {
   const [referredUsers, setReferredUsers]           = useState<{ uid: string; name: string; email: string; referral_code_used: string | null; joined_at: Timestamp | null; verified_at: Timestamp | null }[]>([]);
   const [referredUsersLoading, setReferredUsersLoading] = useState(false);
   const [referredUsersPage, setReferredUsersPage]   = useState(1);
-  const [activeSkillTab, setActiveSkillTab]         = useState<"skills" | "requests">("skills");
+  const [activeSkillTab, setActiveSkillTab]         = useState<"skills" | "requests" | "delete_request">("skills");
   const [selectedDoc, setSelectedDoc]               = useState<{ category: string; name: string; url: string; uploadedAt: Timestamp | null } | null>(null);
   const [userSkillRequests, setUserSkillRequests]   = useState<{
     id: string; skillName: string; skillCategory: string; status: string;
@@ -1311,33 +1314,68 @@ export default function UserProfilePage() {
     if (!userData || !adminUser) return;
     setActionLoading("delete");
     try {
-      await deleteDoc(doc(db, "users", userData.id));
+      const deleteAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await updateDoc(doc(db, "users", userData.id), {
+        pendingDeletion: true,
+        scheduledDeleteAt: Timestamp.fromDate(deleteAt),
+        updatedAt: serverTimestamp(),
+      });
       await writeLog({
         actorId: adminUser.uid,
         actorName: adminUser.displayName ?? "Unknown",
         actorEmail: adminUser.email ?? "",
         module: "user_management",
-        action: "user_deleted",
-        description: buildDescription.userDeleted(userData.name),
+        action: "user_deletion_scheduled",
+        description: buildDescription.userDeletionScheduled(userData.name, deleteAt),
         targetId: userData.id,
         targetName: userData.name,
         affectedFiles: [`users/${userData.id}`],
       });
-      router.push("/users");
+      setConfirmAction(null);
     } catch (err) {
       console.error("[UserProfile] delete error:", err);
+    } finally {
       setActionLoading(null);
     }
-  }, [userData, adminUser, router]);
+  }, [userData, adminUser]);
+
+  const handleCancelDeletion = useCallback(async () => {
+    if (!userData || !adminUser) return;
+    setActionLoading("cancel_deletion");
+    try {
+      await updateDoc(doc(db, "users", userData.id), {
+        pendingDeletion: false,
+        scheduledDeleteAt: null,
+        updatedAt: serverTimestamp(),
+      });
+      await writeLog({
+        actorId: adminUser.uid,
+        actorName: adminUser.displayName ?? "Unknown",
+        actorEmail: adminUser.email ?? "",
+        module: "user_management",
+        action: "user_deletion_cancelled",
+        description: buildDescription.userDeletionCancelled(userData.name),
+        targetId: userData.id,
+        targetName: userData.name,
+        affectedFiles: [`users/${userData.id}`],
+      });
+      setConfirmAction(null);
+    } catch (err) {
+      console.error("[UserProfile] cancel deletion error:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  }, [userData, adminUser]);
 
   const handleConfirm = useCallback(() => {
     switch (confirmAction) {
-      case "lift":   return handleLiftSuspension();
-      case "ban":    return handleBan();
-      case "unban":  return handleUnban();
-      case "delete": return handleDelete();
+      case "lift":             return handleLiftSuspension();
+      case "ban":              return handleBan();
+      case "unban":            return handleUnban();
+      case "delete":           return handleDelete();
+      case "cancel_deletion":  return handleCancelDeletion();
     }
-  }, [confirmAction, handleLiftSuspension, handleBan, handleUnban, handleDelete]);
+  }, [confirmAction, handleLiftSuspension, handleBan, handleUnban, handleDelete, handleCancelDeletion]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1642,29 +1680,40 @@ export default function UserProfilePage() {
         <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
           {/* Tab header */}
           <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-            {(["skills", "requests"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveSkillTab(tab)}
-                style={{
-                  padding: "12px 20px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  border: "none",
-                  borderBottom: `2px solid ${activeSkillTab === tab ? "var(--blue)" : "transparent"}`,
-                  background: "none",
-                  cursor: "pointer",
-                  color: activeSkillTab === tab ? "var(--blue)" : "var(--text-muted)",
-                  marginBottom: -1,
-                  transition: "color 0.15s",
-                  fontFamily: "inherit",
-                }}
-              >
-                {tab === "skills"
-                  ? "Skills"
-                  : `User Requests${userSkillRequests.length > 0 ? ` (${userSkillRequests.length})` : ""}`}
-              </button>
-            ))}
+            {(["skills", "requests", "delete_request"] as const).map((tab) => {
+              const label =
+                tab === "skills" ? "Skills" :
+                tab === "requests" ? `User Requests${userSkillRequests.length > 0 ? ` (${userSkillRequests.length})` : ""}` :
+                "Account Delete Request";
+              const isDanger = tab === "delete_request" && userData.pendingDeletion;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveSkillTab(tab)}
+                  style={{
+                    padding: "12px 20px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    border: "none",
+                    borderBottom: `2px solid ${activeSkillTab === tab ? (isDanger ? "var(--red)" : "var(--blue)") : "transparent"}`,
+                    background: "none",
+                    cursor: "pointer",
+                    color: activeSkillTab === tab ? (isDanger ? "var(--red)" : "var(--blue)") : isDanger ? "var(--red)" : "var(--text-muted)",
+                    marginBottom: -1,
+                    transition: "color 0.15s",
+                    fontFamily: "inherit",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {label}
+                  {tab === "delete_request" && userData.pendingDeletion && (
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--red)", flexShrink: 0, display: "inline-block" }} />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Tab content */}
@@ -1745,7 +1794,7 @@ export default function UserProfilePage() {
                   </div>
                 )}
               </div>
-            ) : (
+            ) : activeSkillTab === "requests" ? (
               /* User Requests tab */
               userRequestsLoading ? (
                 <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading requests…</div>
@@ -1791,6 +1840,82 @@ export default function UserProfilePage() {
                       })}
                     </tbody>
                   </table>
+                </div>
+              )
+            ) : (
+              /* Account Delete Request tab */
+              userData.pendingDeletion ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 14, background: "var(--red-dim)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "var(--radius-sm)", padding: "14px 16px" }}>
+                    <AlertTriangle size={18} style={{ color: "var(--red)", flexShrink: 0, marginTop: 1 }} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--red)", marginBottom: 4 }}>Deletion Scheduled</div>
+                      <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                        This account is scheduled for permanent deletion.
+                        {userData.scheduledDeleteAt && (
+                          <> It will be deleted on <strong style={{ color: "var(--text-primary)" }}>{formatDate(userData.scheduledDeleteAt)}</strong>.</>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                    <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "12px 14px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 6 }}>Status</div>
+                      <span style={{ fontSize: 12, fontWeight: 600, padding: "2px 10px", borderRadius: 20, background: "var(--red-dim)", color: "var(--red)" }}>
+                        Pending Deletion
+                      </span>
+                    </div>
+                    {userData.scheduledDeleteAt && (
+                      <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "12px 14px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 6 }}>Scheduled Date</div>
+                        <span style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 600 }}>{formatDate(userData.scheduledDeleteAt)}</span>
+                      </div>
+                    )}
+                    {userData.scheduledDeleteAt && (
+                      <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "12px 14px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.5px", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 6 }}>Time Remaining</div>
+                        <span style={{ fontSize: 13, color: "var(--orange,#f97316)", fontWeight: 600 }}>
+                          {(() => {
+                            const diff = userData.scheduledDeleteAt.toDate().getTime() - Date.now();
+                            if (diff <= 0) return "Overdue";
+                            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                            return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
+                          })()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <Button
+                      variant="success"
+                      size="sm"
+                      icon={ShieldCheck}
+                      loading={actionLoading === "cancel_deletion"}
+                      onClick={() => setConfirmAction("cancel_deletion")}
+                    >
+                      Cancel Deletion
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
+                    No pending account deletion request.
+                  </div>
+                  <div>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={Trash2}
+                      loading={actionLoading === "delete"}
+                      onClick={() => setConfirmAction("delete")}
+                    >
+                      Schedule Account Deletion
+                    </Button>
+                  </div>
                 </div>
               )
             )}
@@ -2283,10 +2408,16 @@ export default function UserProfilePage() {
             danger: false,
           },
           delete: {
-            title: "Delete User",
-            message: `Permanently delete ${userData.name}'s account? This action cannot be undone.`,
-            label: "Delete",
+            title: "Schedule Deletion",
+            message: `Schedule ${userData.name}'s account for deletion? The account will be permanently deleted in 30 days. You can cancel this during the grace period.`,
+            label: "Schedule Deletion",
             danger: true,
+          },
+          cancel_deletion: {
+            title: "Cancel Deletion",
+            message: `Cancel the scheduled deletion for ${userData.name}? Their account will be restored to normal.`,
+            label: "Cancel Deletion",
+            danger: false,
           },
         };
         const cfg = configs[confirmAction];
