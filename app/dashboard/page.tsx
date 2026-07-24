@@ -21,16 +21,23 @@ import {
   Map,
   Shield,
   Activity,
-  BarChart2,
   Settings,
   File,
   RefreshCw,
   Zap,
   CheckCircle2,
   Clock,
+  BadgeCheck,
+  Wrench,
+  Gift,
+  MegaphoneIcon,
+  Headphones,
+  LayoutDashboard,
+  LucideIcon,
 } from "lucide-react";
 import { getModuleConfig } from "@/lib/activityLogConfig";
 import { useCurrency } from "@/context/CurrencyContext";
+import type { ModuleKey } from "@/lib/modules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,6 +148,31 @@ function StatCard({
   );
 }
 
+// ─── Quick Navigate links ─────────────────────────────────────────────────────
+
+const QUICK_LINKS: {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  accent: string;
+  module: ModuleKey;
+}[] = [
+  { href: "/dashboard",           icon: LayoutDashboard, label: "Dashboard",               accent: "var(--blue)",           module: "dashboard" },
+  { href: "/live-map",            icon: Map,             label: "Live Map",                accent: "var(--green)",          module: "live-map" },
+  { href: "/activity-logs",       icon: Activity,        label: "Activity Logs",           accent: "var(--blue)",           module: "activity-logs" },
+  { href: "/live-gigs",           icon: Briefcase,       label: "Gigs",                    accent: "var(--orange)",         module: "live-gigs" },
+  { href: "/quick-gigs",          icon: Zap,             label: "Quick Gigs Configuration", accent: "var(--purple)",        module: "quick-gigs" },
+  { href: "/users",               icon: Users,           label: "Users",                   accent: "var(--blue)",           module: "users" },
+  { href: "/verification",        icon: BadgeCheck,      label: "Verification",            accent: "var(--green)",         module: "verification" },
+  { href: "/user-skills",         icon: Wrench,          label: "User Skills",             accent: "var(--orange)",        module: "library-gsin" },
+  { href: "/referrals",           icon: Gift,            label: "Referrals",               accent: "var(--purple)",        module: "referrals" },
+  { href: "/announcements",       icon: MegaphoneIcon,   label: "Announcements",           accent: "var(--orange)",        module: "announcements" },
+  { href: "/support",             icon: Headphones,      label: "Support",                 accent: "var(--teal, #0d9488)", module: "reports" },
+  { href: "/content-management",  icon: File,            label: "Content Management",      accent: "var(--indigo, #6366f1)", module: "content-management" },
+  { href: "/admins",              icon: Shield,          label: "Admins",                  accent: "var(--purple)",        module: "admins" },
+  { href: "/settings",            icon: Settings,        label: "Settings",                accent: "var(--text-muted)",    module: "settings" },
+];
+
 // ─── Quick Link Card ──────────────────────────────────────────────────────────
 
 function QuickLink({
@@ -191,7 +223,7 @@ function QuickLink({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  useAuthGuard();
+  const { hasPermission } = useAuthGuard();
   const { symbol } = useCurrency();
 
   const [totalUsers, setTotalUsers] = useState(0);
@@ -595,14 +627,9 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="db-links">
-            <QuickLink href="/users"             icon={<Users size={14} />}      label="Users"              accent="var(--blue)"   />
-            <QuickLink href="/live-gigs"          icon={<Briefcase size={14} />}  label="Live Gigs"          accent="var(--orange)" />
-            <QuickLink href="/live-map"           icon={<Map size={14} />}        label="Live Map"           accent="var(--green)"  />
-            <QuickLink href="/admins"             icon={<Shield size={14} />}     label="Admins"             accent="var(--purple)" />
-            <QuickLink href="/activity-logs"      icon={<Activity size={14} />}   label="Activity Logs"      accent="var(--blue)"   />
-            <QuickLink href="/support"            icon={<BarChart2 size={14} />}  label="Support"            accent="var(--teal, #0d9488)"  />
-            <QuickLink href="/settings"           icon={<Settings size={14} />}   label="Settings"           accent="var(--text-muted)"     />
-            <QuickLink href="/content-management" icon={<File size={14} />}       label="Content Management" accent="var(--indigo, #6366f1)" />
+            {QUICK_LINKS.filter((l) => hasPermission(l.module)).map((l) => (
+              <QuickLink key={l.href} href={l.href} icon={<l.icon size={14} />} label={l.label} accent={l.accent} />
+            ))}
           </div>
         </div>
       </div>

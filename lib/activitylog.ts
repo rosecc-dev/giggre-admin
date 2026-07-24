@@ -45,7 +45,13 @@ export type GigLogAction =
   | "gig_deleted"
   | "gig_closed"
   | "gig_cancelled"
-  | "gig_bulk_cancelled";
+  | "gig_cancel_failed"
+  | "gig_bulk_cancelled"
+  | "gig_bulk_cancel_failed"
+  | "gig_worker_cancellation_approved"
+  | "gig_worker_cancellation_approve_failed"
+  | "gig_worker_cancellation_rejected"
+  | "gig_worker_cancellation_reject_failed";
 
 export type QuickGigLogAction = "config_updated";
 
@@ -254,6 +260,18 @@ export const buildDescription = {
 
   gigBulkCancelFailed: (adminName: string, count: number) =>
     `${adminName} attempted to bulk-cancel ${count} gig${count !== 1 ? "s" : ""} — operation failed`,
+
+  gigWorkerCancellationApproved: (gigTitle: string, workerLabel: string) =>
+    `Approved worker cancellation for ${workerLabel} on gig "${gigTitle}"`,
+
+  gigWorkerCancellationApproveFailed: (gigTitle: string, workerLabel: string) =>
+    `Failed to approve worker cancellation for ${workerLabel} on gig "${gigTitle}" — Firestore write did not complete`,
+
+  gigWorkerCancellationRejected: (gigTitle: string, workerLabel: string, restoredStatus: string) =>
+    `Rejected worker cancellation for ${workerLabel} on gig "${gigTitle}" — status restored to "${restoredStatus}"`,
+
+  gigWorkerCancellationRejectFailed: (gigTitle: string, workerLabel: string) =>
+    `Failed to reject worker cancellation for ${workerLabel} on gig "${gigTitle}" — Firestore write did not complete`,
 
   // ── Settings ──────────────────────────────────────────────────────────────
 

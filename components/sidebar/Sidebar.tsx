@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard, Users, Briefcase, Shield, BarChart2,
+  LayoutDashboard, Users, Shield,
   Settings, LogOut, ChevronLeft, ChevronRight, Activity,
-  Map, Library, MegaphoneIcon, File, BadgeCheck, GitBranch,
+  Map, MegaphoneIcon, File, BadgeCheck,
+  ClipboardList, Zap, Wrench, Gift, Headphones,
   LucideIcon,
 } from "lucide-react";
 import { auth } from "@/lib/firebase";
@@ -14,7 +15,7 @@ import { useAuth } from "@/context/AuthContext";
 import SidebarItem from "./SidebarItem";
 import type { ModuleKey } from "@/lib/modules";
 
-// ─── Nav config with module keys ─────────────────────────────────────────────
+// ─── Nav config with module keys, grouped ────────────────────────────────────
 
 interface NavItem {
   href: string;
@@ -23,30 +24,61 @@ interface NavItem {
   module: ModuleKey;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",     icon: LayoutDashboard, label: "Dashboard",     module: "dashboard" },
-  { href: "/users",         icon: Users,           label: "Users",         module: "users" },
-  { href: "/live-gigs",     icon: Briefcase,       label: "Gigs",          module: "live-gigs" },
-  { href: "/live-map",      icon: Map,             label: "Live Map",      module: "live-map" },
-  { href: "/admins",        icon: Shield,          label: "Admins",        module: "admins" },
-  { href: "/announcements", icon: MegaphoneIcon,   label: "Announcements", module: "announcements" },
-  { href: "/support",       icon: BarChart2,       label: "Support",       module: "reports" },
-  { href: "/settings",      icon: Settings,        label: "Settings",      module: "settings" },
-  { href: "/content-management",      icon: File,        label: "Content Management",      module: "content-management" },
-  { href: "/verification",            icon: BadgeCheck,  label: "Verification",            module: "verification" },
-  { href: "/referrals",               icon: GitBranch,   label: "Referrals",               module: "referrals" },
-];
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
 
-const LIBRARY_ITEMS: NavItem[] = [
-  { href: "/user-skills", icon: Library, label: "User Skills", module: "library-gsin" },
-];
-
-const QG_ITEMS: NavItem[] = [
-  { href: "/quick-gigs", icon: Library, label: "Quick Gigs Configuration", module: "quick-gigs" },
-];
-
-const SYSTEM_ITEMS: NavItem[] = [
-  { href: "/activity-logs", icon: Activity, label: "Activity Logs", module: "activity-logs" },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Overview",
+    items: [
+      { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard", module: "dashboard" },
+    ],
+  },
+  {
+    label: "Monitoring",
+    items: [
+      { href: "/live-map",      icon: Map,      label: "Live Map",      module: "live-map" },
+      { href: "/activity-logs", icon: Activity, label: "Activity Logs", module: "activity-logs" },
+    ],
+  },
+  {
+    label: "Marketplace",
+    items: [
+      { href: "/live-gigs",  icon: ClipboardList, label: "Gigs",                      module: "live-gigs" },
+      { href: "/quick-gigs", icon: Zap,            label: "Quick Gigs Configuration",  module: "quick-gigs" },
+    ],
+  },
+  {
+    label: "Users",
+    items: [
+      { href: "/users",        icon: Users,      label: "Users",        module: "users" },
+      { href: "/verification", icon: BadgeCheck, label: "Verification", module: "verification" },
+      { href: "/user-skills",  icon: Wrench,     label: "User Skills",  module: "library-gsin" },
+      { href: "/referrals",    icon: Gift,       label: "Referrals",    module: "referrals" },
+    ],
+  },
+  {
+    label: "Communication",
+    items: [
+      { href: "/announcements", icon: MegaphoneIcon, label: "Announcements", module: "announcements" },
+      { href: "/support",       icon: Headphones,    label: "Support",       module: "reports" },
+    ],
+  },
+  {
+    label: "Content",
+    items: [
+      { href: "/content-management", icon: File, label: "Content Management", module: "content-management" },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { href: "/admins",   icon: Shield,   label: "Admins",   module: "admins" },
+      { href: "/settings", icon: Settings, label: "Settings", module: "settings" },
+    ],
+  },
 ];
 
 const ROLE_COLOR: Record<string, string> = {
@@ -73,11 +105,13 @@ export default function Sidebar({ collapsed, onToggle, user }: SidebarProps) {
     ? user.displayName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
     : "SA";
 
-  // Filter items by permission
-  const visibleNav = NAV_ITEMS.filter((item) => hasPermission(item.module));
-  const visibleLib = LIBRARY_ITEMS.filter((item) => hasPermission(item.module));
-  const visibleQG  = QG_ITEMS.filter((item) => hasPermission(item.module));
-  const visibleSys = SYSTEM_ITEMS.filter((item) => hasPermission(item.module));
+  // Filter groups/items by permission; drop groups left with no visible items
+  const visibleGroups = NAV_GROUPS
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => hasPermission(item.module)),
+    }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <aside className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
@@ -196,48 +230,16 @@ export default function Sidebar({ collapsed, onToggle, user }: SidebarProps) {
       </button>
 
       <nav className="sb-nav">
-        {visibleNav.length > 0 && (
-          <>
-            {!collapsed && <div className="sb-section-label">Main Menu</div>}
-            {visibleNav.map((item) => (
+        {visibleGroups.map((group, i) => (
+          <div key={group.label}>
+            {i > 0 && <div className="sb-divider" />}
+            {!collapsed && <div className="sb-section-label">{group.label}</div>}
+            {group.items.map((item) => (
               <SidebarItem key={item.href} href={item.href} icon={item.icon}
                 label={item.label} collapsed={collapsed} />
             ))}
-          </>
-        )}
-
-        {visibleQG.length > 0 && (
-          <>
-            <div className="sb-divider" />
-            {!collapsed && <div className="sb-section-label">Quick Gigs</div>}
-            {visibleQG.map((item) => (
-              <SidebarItem key={item.href} href={item.href} icon={item.icon}
-                label={item.label} collapsed={collapsed} />
-            ))}
-          </>
-        )}
-
-        {visibleLib.length > 0 && (
-          <>
-            <div className="sb-divider" />
-            {!collapsed && <div className="sb-section-label">Skills</div>}
-            {visibleLib.map((item) => (
-              <SidebarItem key={item.href} href={item.href} icon={item.icon}
-                label={item.label} collapsed={collapsed} />
-            ))}
-          </>
-        )}
-
-        {visibleSys.length > 0 && (
-          <>
-            <div className="sb-divider" />
-            {!collapsed && <div className="sb-section-label">System</div>}
-            {visibleSys.map((item) => (
-              <SidebarItem key={item.href} href={item.href} icon={item.icon}
-                label={item.label} collapsed={collapsed} />
-            ))}
-          </>
-        )}
+          </div>
+        ))}
       </nav>
 
       <div className="sb-footer">

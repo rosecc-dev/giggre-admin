@@ -657,7 +657,7 @@ export default function UsersPage() {
   const [users, setUsers]                   = useState<AppUser[]>([]);
   const [loading, setLoading]               = useState(true);
   const [search, setSearch]                 = useState("");
-  const [sortField, setSortField]           = useState<SortField | null>(null);
+  const [sortField, setSortField]           = useState<SortField | null>("createdAt");
   const [sortDir, setSortDir]               = useState<SortDir>("desc");
   const [expandedId, setExpandedId]         = useState<string | null>(null);
   const [page, setPage]                     = useState(1);

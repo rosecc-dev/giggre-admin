@@ -138,11 +138,12 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
 
   // ── GSIN "Add to Library" ────────────────────────────────────────────────
 
-  interface GsinSkill { id: string; skillId: string; name: string }
+  interface GsinSkill { id: string; skillId: string; name: string; category?: string }
 
   const [gsinSkills, setGsinSkills]       = useState<GsinSkill[]>([])
   const [addToGsinItem, setAddToGsinItem] = useState<SkillRequest | null>(null)
   const [gsinName, setGsinName]           = useState("")
+  const [gsinCategory, setGsinCategory]   = useState("")
   const [gsinSaving, setGsinSaving]       = useState(false)
   const [gsinError, setGsinError]         = useState("")
 
@@ -158,7 +159,7 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         setGsinSkills(
           snap.docs
             .filter(d => !d.id.startsWith("_"))
-            .map(d => ({ id: d.id, skillId: d.data().skillId as string, name: d.data().name as string }))
+            .map(d => ({ id: d.id, skillId: d.data().skillId as string, name: d.data().name as string, category: d.data().category as string | undefined }))
         )
       })
       .catch(err => console.error("Failed to load GSIN skills:", err))
@@ -186,6 +187,7 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
   const openAddToGsin = (request: SkillRequest) => {
     setAddToGsinItem(request)
     setGsinName(request.skillName || "")
+    setGsinCategory(request.skillCategory || "")
     setGsinError("")
   }
 
@@ -256,6 +258,7 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
   const handleAddToGsin = async () => {
     if (!addToGsinItem) return
     const trimmed = gsinName.trim()
+    const trimmedCategory = gsinCategory.trim()
     if (!trimmed) { setGsinError("Skill name cannot be empty."); return }
     const exact = gsinSkills.find(s => s.name.toLowerCase() === trimmed.toLowerCase())
     if (exact) { setGsinError(`"${exact.name}" already exists in the library (${exact.skillId}).`); return }
@@ -268,13 +271,15 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
       await setDoc(newSkillRef, {
         skillId:   libraryId,
         name:      trimmed,
+        category:  trimmedCategory,
         createdAt: Timestamp.now(),
       })
 
-      // Link the skill_request to the newly created skill and sync the name
+      // Link the skill_request to the newly created skill and sync the name/category
       await updateDoc(doc(db, "skill_requests", addToGsinItem.id), {
         skillId:              libraryId,
         skillName:            trimmed,
+        skillCategory:        trimmedCategory,
         prevSkillRequestedName: addToGsinItem.skillName || "",
         updatedAt:            serverTimestamp(),
       })
@@ -288,11 +293,11 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         description: `Added "${trimmed}" (${libraryId}) to GSIN library from skill request ${addToGsinItem.skill_req_Id}`,
         targetId:   newSkillRef.id,
         targetName: trimmed,
-        meta: { to: { skillId: libraryId, name: trimmed } },
+        meta: { to: { skillId: libraryId, name: trimmed, category: trimmedCategory } },
       })
 
       toast.success(`"${trimmed}" added to GSIN library and linked to this request.`)
-      setGsinSkills(prev => [...prev, { id: newSkillRef.id, skillId: libraryId, name: trimmed }])
+      setGsinSkills(prev => [...prev, { id: newSkillRef.id, skillId: libraryId, name: trimmed, category: trimmedCategory }])
       setAddToGsinItem(null)
     } catch (err) {
       console.error("Failed to add to GSIN:", err)
@@ -1099,7 +1104,6 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
               <span className="ticket-modal-label">Requested by</span>
               <p className="ticket-modal-subject" style={{ fontSize: 13 }}>
                 {addToGsinItem.userName}
-                <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {addToGsinItem.skillCategory || "—"}</span>
               </p>
             </div>
 
@@ -1122,6 +1126,20 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
                 ? <span className="ur-gsin-err">{gsinError}</span>
                 : <span className="ur-gsin-hint">A unique GSIN ID will be generated automatically.</span>
               }
+            </div>
+
+            <div className="ticket-modal-section">
+              <label className="ticket-modal-label" htmlFor="gsin-skill-category">
+                Category
+              </label>
+              <input
+                id="gsin-skill-category"
+                className="ur-input"
+                value={gsinCategory}
+                onChange={e => setGsinCategory(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleAddToGsin() }}
+                placeholder="Enter a category"
+              />
             </div>
 
             {similarSkills.length > 0 && (

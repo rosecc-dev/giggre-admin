@@ -6,11 +6,17 @@ import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import {
   collection,
+  collectionGroup,
+  query,
+  where,
   getDocs,
   getDoc,
   Timestamp,
   doc,
   updateDoc,
+  deleteField,
+  serverTimestamp,
+  arrayUnion,
 } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import {
@@ -80,7 +86,23 @@ type Gig = GigBase & Record<string, unknown>;
 type StatusFilter = "all" | "completed" | "in_progress" | "cancelled" | "inactive" | "expired";
 type GigTypeFilter = "all" | GigType;
 type SortOption = "newest" | "oldest" | "pay-high" | "pay-low";
-type ActiveTab = "cancellation_requests" | "all_gigs";
+type ActiveTab = "cancellation_requests" | "worker_cancellation_requests" | "all_gigs";
+
+// Per-worker cancellation request on a multi-worker gig, stored at
+// {gigCollection}/{gigId}/workers/{workerId} — resolved via a collectionGroup query.
+interface WorkerCancellationRequest {
+  workerId: string;
+  gigId: string;
+  gigType: GigType;
+  workerDocPath: string;
+  status: string;
+  lastProgressStatus?: string;
+  cancellationRequestedAt: Timestamp | null;
+  cancellation_reason: Array<{ approved: boolean | null; reason: string; requestedBy: string; approvedBy?: string }>;
+  workerName?: string;
+  gigTitle: string;
+  hostName: string;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +213,10 @@ const GIG_COLLECTIONS: Record<GigType, string> = {
   quick: "quick_gigs",
 };
 
+const GIG_COLLECTIONS_INVERSE: Record<string, GigType> = Object.fromEntries(
+  Object.entries(GIG_COLLECTIONS).map(([k, v]) => [v, k])
+) as Record<string, GigType>;
+
 const BASE_FIELDS = new Set([
   "id", "gigType", "title", "description", "status", "category",
   "vacancy", "slot", "salary", "postedBy", "location", "createdAt", "applications",
@@ -266,6 +292,17 @@ export default function LiveGigsPage() {
   const [cancelModalGig, setCancelModalGig] = useState<Gig | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelTicketID, setCancelTicketId] = useState("");
+
+  // ── Worker (multi-worker gig) cancellation requests ──
+  const [workerCancelRequests, setWorkerCancelRequests] = useState<WorkerCancellationRequest[]>([]);
+  const [workerCancelLoading, setWorkerCancelLoading] = useState(false);
+  const [workerCancelFetchError, setWorkerCancelFetchError] = useState<string | null>(null);
+  const [workerCancelFetched, setWorkerCancelFetched] = useState(false);
+  const [workerCancellingId, setWorkerCancellingId] = useState<string | null>(null);
+  const [workerRejectTarget, setWorkerRejectTarget] = useState<WorkerCancellationRequest | null>(null);
+  const [workerRejectNote, setWorkerRejectNote] = useState("");
+  const [workerRejecting, setWorkerRejecting] = useState(false);
+  const [workerRejectError, setWorkerRejectError] = useState<string | null>(null);
 
   type ExpiryGig = { id: string; title: string; gigType: string; collection: string; expireAfterHours: number };
   const [runningExpiry, setRunningExpiry] = useState(false);
@@ -535,6 +572,69 @@ export default function LiveGigsPage() {
     }
   }, [gigTypeFilter]);
 
+  const fetchWorkerCancellationRequests = useCallback(async () => {
+    setWorkerCancelLoading(true);
+    setWorkerCancelFetchError(null);
+    try {
+      const q = query(collectionGroup(db, "workers"), where("status", "==", "cancellation_requested"));
+      const snap = await getDocs(q);
+
+      // Dedup gig-doc reads — several worker requests can belong to the same gig.
+      const gigCache = new Map<string, Promise<{ title: string; hostName: string } | null>>();
+      const getGigInfo = (gigType: GigType, gigId: string) => {
+        const key = `${gigType}/${gigId}`;
+        if (!gigCache.has(key)) {
+          gigCache.set(
+            key,
+            getDoc(doc(db, GIG_COLLECTIONS[gigType], gigId)).then((s) =>
+              s.exists()
+                ? { title: (s.data().title as string) ?? "", hostName: (s.data().hostName as string) ?? "" }
+                : null
+            )
+          );
+        }
+        return gigCache.get(key)!;
+      };
+
+      const results = await Promise.all(
+        snap.docs.map(async (d) => {
+          const gigRef = d.ref.parent.parent;
+          if (!gigRef) return null;
+          const collectionName = gigRef.parent.id;
+          const gigType = GIG_COLLECTIONS_INVERSE[collectionName];
+          if (!gigType) return null;
+
+          const gigInfo = await getGigInfo(gigType, gigRef.id);
+          const data = d.data();
+          const req: WorkerCancellationRequest = {
+            workerId: d.id,
+            gigId: gigRef.id,
+            gigType,
+            workerDocPath: `${collectionName}/${gigRef.id}/workers/${d.id}`,
+            status: (data.status as string) ?? "",
+            lastProgressStatus: data.lastProgressStatus as string | undefined,
+            cancellationRequestedAt: (data.cancellationRequestedAt as Timestamp) ?? null,
+            cancellation_reason: (data.cancellation_reason as WorkerCancellationRequest["cancellation_reason"]) ?? [],
+            workerName: data.workerName as string | undefined,
+            gigTitle: gigInfo?.title || "Untitled Gig",
+            hostName: gigInfo?.hostName || "—",
+          };
+          return req;
+        })
+      );
+      setWorkerCancelRequests(results.filter((r): r is WorkerCancellationRequest => r !== null));
+    } catch (err) {
+      console.error("Failed to fetch worker cancellation requests:", err);
+      const message = err instanceof Error && err.message.toLowerCase().includes("index")
+        ? "This view needs a Firestore index that hasn't been deployed yet. Ask an engineer to deploy firestore.indexes.json."
+        : "Failed to load worker cancellation requests. Please try again.";
+      setWorkerCancelFetchError(message);
+    } finally {
+      setWorkerCancelLoading(false);
+      setWorkerCancelFetched(true);
+    }
+  }, []);
+
   const runAutoExpiry = useCallback(async () => {
     setRunningExpiry(true);
     try {
@@ -555,6 +655,12 @@ export default function LiveGigsPage() {
   }, [fetchLiveGigs]);
 
   useEffect(() => { fetchLiveGigs(); }, [fetchLiveGigs]);
+
+  useEffect(() => {
+    if (activeTab === "worker_cancellation_requests" && !workerCancelFetched) {
+      fetchWorkerCancellationRequests();
+    }
+  }, [activeTab, workerCancelFetched, fetchWorkerCancellationRequests]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
 
@@ -741,6 +847,187 @@ export default function LiveGigsPage() {
       setCrBulkCancelling(false);
     }
   }, [crBulkCancelling, cancellationRequests, crSelectedIds, crBulkReason, crBulkTicketID, user]);
+
+  function patchLastCancellationReason(
+    arr: WorkerCancellationRequest["cancellation_reason"],
+    approved: boolean,
+    approvedBy: string
+  ): WorkerCancellationRequest["cancellation_reason"] {
+    if (arr.length === 0) return arr;
+    const next = arr.map((e) => ({ ...e }));
+    next[next.length - 1] = { ...next[next.length - 1], approved, approvedBy };
+    return next;
+  }
+
+  const approveWorkerCancellation = useCallback(async (req: WorkerCancellationRequest) => {
+    if (workerCancellingId) return;
+    setWorkerCancellingId(req.workerDocPath);
+    const adminId = user!.uid;
+    const adminName = user!.displayName ?? "Unknown";
+    const adminEmail = user!.email ?? "";
+    const nextReasonArr = patchLastCancellationReason(req.cancellation_reason, true, adminId);
+
+    setWorkerCancelRequests((prev) => prev.filter((r) => r.workerDocPath !== req.workerDocPath));
+
+    try {
+      await Promise.all([
+        updateDoc(doc(db, req.workerDocPath), {
+          status: "cancelled",
+          approved: true,
+          approvedBy: adminId,
+          approvedByName: adminName,
+          cancelledAt: serverTimestamp(),
+          cancellation_reason: nextReasonArr,
+        }),
+        ...(req.gigType === "quick"
+          ? [
+              updateDoc(doc(db, GIG_COLLECTIONS[req.gigType], req.gigId), {
+                exclusionList: arrayUnion(req.workerId),
+              }),
+            ]
+          : []),
+      ]);
+      await writeLog({
+        actorId: adminId,
+        actorName: adminName,
+        actorEmail: adminEmail,
+        module: "gig_management",
+        action: "gig_worker_cancellation_approved",
+        description: buildDescription.gigWorkerCancellationApproved(req.gigTitle, req.workerName || req.workerId),
+        targetId: req.workerDocPath,
+        targetName: req.gigTitle,
+        meta: {
+          other: {
+            gigId: req.gigId,
+            gigType: req.gigType,
+            workerId: req.workerId,
+            collection: GIG_COLLECTIONS[req.gigType],
+            previousStatus: req.status,
+            previousLastProgressStatus: req.lastProgressStatus ?? null,
+            approvedByAdminId: adminId,
+            approvedByAdminName: adminName,
+          },
+        },
+      });
+    } catch (err) {
+      setWorkerCancelRequests((prev) => [...prev, req]);
+      console.error("Failed to approve worker cancellation:", err);
+      toast.error(
+        "Approval failed",
+        `Could not approve cancellation for "${req.workerName || req.workerId}". No changes were saved.`
+      );
+      try {
+        await writeLog({
+          actorId: adminId,
+          actorName: adminName,
+          actorEmail: adminEmail,
+          module: "gig_management",
+          action: "gig_worker_cancellation_approve_failed",
+          description: buildDescription.gigWorkerCancellationApproveFailed(req.gigTitle, req.workerName || req.workerId),
+          targetId: req.workerDocPath,
+          targetName: req.gigTitle,
+          meta: {
+            other: {
+              error: err instanceof Error ? err.message : String(err),
+              gigId: req.gigId,
+              gigType: req.gigType,
+              workerId: req.workerId,
+            },
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to log worker approve failure:", logErr);
+      }
+    } finally {
+      setWorkerCancellingId(null);
+    }
+  }, [workerCancellingId, user]);
+
+  const openWorkerRejectModal = useCallback((req: WorkerCancellationRequest) => {
+    setWorkerRejectTarget(req);
+    setWorkerRejectNote("");
+    setWorkerRejectError(null);
+  }, []);
+
+  const rejectWorkerCancellation = useCallback(async () => {
+    const req = workerRejectTarget;
+    if (!req || workerRejecting) return;
+    setWorkerRejecting(true);
+    setWorkerRejectError(null);
+    const adminId = user!.uid;
+    const adminName = user!.displayName ?? "Unknown";
+    const adminEmail = user!.email ?? "";
+    const restoredStatus = req.lastProgressStatus || "working";
+    const nextReasonArr = patchLastCancellationReason(req.cancellation_reason, false, adminId);
+
+    setWorkerCancelRequests((prev) => prev.filter((r) => r.workerDocPath !== req.workerDocPath));
+
+    try {
+      await updateDoc(doc(db, req.workerDocPath), {
+        status: restoredStatus,
+        approved: false,
+        approvedBy: adminId,
+        approvedByName: adminName,
+        lastProgressStatus: deleteField(),
+        cancellation_reason: nextReasonArr,
+      });
+      await writeLog({
+        actorId: adminId,
+        actorName: adminName,
+        actorEmail: adminEmail,
+        module: "gig_management",
+        action: "gig_worker_cancellation_rejected",
+        description: buildDescription.gigWorkerCancellationRejected(req.gigTitle, req.workerName || req.workerId, restoredStatus),
+        targetId: req.workerDocPath,
+        targetName: req.gigTitle,
+        meta: {
+          other: {
+            gigId: req.gigId,
+            gigType: req.gigType,
+            workerId: req.workerId,
+            collection: GIG_COLLECTIONS[req.gigType],
+            restoredStatus,
+            adminNote: workerRejectNote.trim() || null,
+            rejectedByAdminId: adminId,
+            rejectedByAdminName: adminName,
+          },
+        },
+      });
+      setWorkerRejectTarget(null);
+    } catch (err) {
+      setWorkerCancelRequests((prev) => [...prev, req]);
+      console.error("Failed to reject worker cancellation:", err);
+      setWorkerRejectError(`Failed to reject cancellation for "${req.workerName || req.workerId}". Please try again.`);
+      toast.error(
+        "Rejection failed",
+        `Could not reject cancellation for "${req.workerName || req.workerId}".`
+      );
+      try {
+        await writeLog({
+          actorId: adminId,
+          actorName: adminName,
+          actorEmail: adminEmail,
+          module: "gig_management",
+          action: "gig_worker_cancellation_reject_failed",
+          description: buildDescription.gigWorkerCancellationRejectFailed(req.gigTitle, req.workerName || req.workerId),
+          targetId: req.workerDocPath,
+          targetName: req.gigTitle,
+          meta: {
+            other: {
+              error: err instanceof Error ? err.message : String(err),
+              gigId: req.gigId,
+              gigType: req.gigType,
+              workerId: req.workerId,
+            },
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to log worker reject failure:", logErr);
+      }
+    } finally {
+      setWorkerRejecting(false);
+    }
+  }, [workerRejectTarget, workerRejecting, workerRejectNote, user]);
 
   const stats = useMemo(() => {
     const total = gigs.length;
@@ -1165,6 +1452,15 @@ export default function LiveGigsPage() {
             )}
           </button>
           <button
+            className={`lg-tab${activeTab === "worker_cancellation_requests" ? " lg-tab--active" : ""}`}
+            onClick={() => { setActiveTab("worker_cancellation_requests"); setCrSelectedIds(new Set()); }}
+          >
+            Worker Cancellations
+            {workerCancelRequests.length > 0 && (
+              <span className="lg-tab-badge lg-tab-badge--red">{workerCancelRequests.length}</span>
+            )}
+          </button>
+          <button
             className={`lg-tab${activeTab === "all_gigs" ? " lg-tab--active" : ""}`}
             onClick={() => { setActiveTab("all_gigs"); setCrSelectedIds(new Set()); }}
           >
@@ -1185,6 +1481,16 @@ export default function LiveGigsPage() {
             onApprove={openCancelModal}
             onReject={(gig) => setDetailGig(gig)}
             onRowClick={(gig) => setDetailGig(gig)}
+          />
+        ) : activeTab === "worker_cancellation_requests" ? (
+          <WorkerCancellationRequestsTab
+            requests={workerCancelRequests}
+            loading={workerCancelLoading}
+            fetchError={workerCancelFetchError}
+            cancellingId={workerCancellingId}
+            onRefresh={fetchWorkerCancellationRequests}
+            onApprove={approveWorkerCancellation}
+            onReject={openWorkerRejectModal}
           />
         ) : (
         <>
@@ -1705,6 +2011,39 @@ export default function LiveGigsPage() {
         </Modal>
       )}
 
+      {/* ── Worker Cancellation Reject Modal ── */}
+      {workerRejectTarget && (
+        <Modal
+          open
+          onClose={() => { if (!workerRejecting) { setWorkerRejectTarget(null); setWorkerRejectError(null); } }}
+          title="Reject Worker Cancellation"
+          description={`"${workerRejectTarget.workerName || workerRejectTarget.workerId}" on "${workerRejectTarget.gigTitle}" will be restored to status "${workerRejectTarget.lastProgressStatus || "working"}".`}
+          size="sm"
+          footer={
+            <>
+              <Button variant="ghost" size="sm" onClick={() => { setWorkerRejectTarget(null); setWorkerRejectError(null); }} disabled={workerRejecting}>
+                Dismiss
+              </Button>
+              <Button variant="danger" size="sm" loading={workerRejecting} onClick={rejectWorkerCancellation}>
+                Confirm Reject
+              </Button>
+            </>
+          }
+        >
+          <div className="cgm-field" style={{ marginBottom: 0 }}>
+            <label className="cgm-label">Admin Note (optional)</label>
+            <textarea
+              className="cgm-input cgm-textarea"
+              placeholder="Optional internal note about this rejection…"
+              value={workerRejectNote}
+              onChange={(e) => setWorkerRejectNote(e.target.value)}
+              disabled={workerRejecting}
+            />
+          </div>
+          {workerRejectError && <div className="cgm-error">{workerRejectError}</div>}
+        </Modal>
+      )}
+
       {/* ── Auto-Expiry Result Modal ── */}
       {expiryResult && (
         <Modal
@@ -1957,6 +2296,184 @@ function CancellationRequestsTab({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Worker Cancellation Requests Tab ────────────────────────────────────────
+
+function WorkerCancellationRequestsTab({
+  requests, loading, fetchError, cancellingId, onRefresh, onApprove, onReject,
+}: {
+  requests: WorkerCancellationRequest[];
+  loading: boolean;
+  fetchError: string | null;
+  cancellingId: string | null;
+  onRefresh: () => void;
+  onApprove: (req: WorkerCancellationRequest) => void;
+  onReject: (req: WorkerCancellationRequest) => void;
+}) {
+  const WC_PAGE_SIZE = 20;
+  const [wcPage, setWcPage] = useState(1);
+
+  useEffect(() => { setWcPage(1); }, [requests.length]);
+
+  const wcTotalPages = Math.max(1, Math.ceil(requests.length / WC_PAGE_SIZE));
+  const paginated = requests.slice((wcPage - 1) * WC_PAGE_SIZE, wcPage * WC_PAGE_SIZE);
+
+  if (loading) return (
+    <div className="lg-cr-card"><LoadingSkeleton /></div>
+  );
+
+  if (fetchError) return (
+    <div className="lg-cr-card">
+      <div className="lg-empty">
+        <div className="lg-empty-title" style={{ color: "var(--red)" }}>{fetchError}</div>
+        <button className="lg-approve-btn" style={{ marginTop: 12 }} onClick={onRefresh}>Retry</button>
+      </div>
+    </div>
+  );
+
+  if (requests.length === 0) return (
+    <div className="lg-cr-card">
+      <div className="lg-empty">
+        <div className="lg-empty-icon"><Users size={36} /></div>
+        <div className="lg-empty-title">No worker cancellation requests</div>
+        <div className="lg-empty-sub">Per-worker cancellation requests on multi-worker gigs will appear here.</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="lg-cr-card">
+      <div className="lg-card-header">
+        <span className="lg-card-title">Worker Cancellation Requests</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="lg-card-count">{requests.length} request{requests.length !== 1 ? "s" : ""}</span>
+          <button className="lg-view-btn" onClick={onRefresh} title="Refresh">
+            <RefreshCw size={12} />
+          </button>
+        </div>
+      </div>
+      {wcTotalPages > 1 && (
+        <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "6px 16px 0" }}>
+          Showing {(wcPage - 1) * WC_PAGE_SIZE + 1}–{Math.min(wcPage * WC_PAGE_SIZE, requests.length)} of {requests.length}
+        </div>
+      )}
+
+      <table className="lg-table">
+        <thead>
+          <tr>
+            <th>Gig</th>
+            <th>Worker</th>
+            <th>Host</th>
+            <th>Requested By</th>
+            <th>Reason</th>
+            <th>Requested</th>
+            <th>Previous Status</th>
+            <th>Current Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginated.map((req) => {
+            const lastEntry = req.cancellation_reason[req.cancellation_reason.length - 1];
+            return (
+              <tr key={req.workerDocPath} className="lg-row">
+                <td>
+                  <div className="lg-gig-title">{req.gigTitle}</div>
+                  <CopyableId id={req.gigId} />
+                </td>
+                <td>
+                  <div className="lg-gig-title">{req.workerName || req.workerId}</div>
+                  <CopyableId id={req.workerId} />
+                </td>
+                <td>
+                  <span style={{ fontSize: 13, color: "var(--text-primary)" }}>{req.hostName}</span>
+                </td>
+                <td>
+                  {lastEntry?.requestedBy ? (
+                    <span style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500, textTransform: "capitalize" }}>
+                      {lastEntry.requestedBy}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>—</span>
+                  )}
+                </td>
+                <td>
+                  {lastEntry?.reason ? (
+                    <div className="lg-cr-reason" title={lastEntry.reason}>{lastEntry.reason}</div>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>—</span>
+                  )}
+                </td>
+                <td>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {formatDateShort(req.cancellationRequestedAt)}
+                  </span>
+                </td>
+                <td>
+                  <span className={`lg-badge ${statusBadgeClass(req.lastProgressStatus || "")}`}>
+                    <span className="lg-badge-dot" />
+                    {statusLabel(req.lastProgressStatus || "")}
+                  </span>
+                </td>
+                <td>
+                  <span className={`lg-badge ${statusBadgeClass(req.status)}`}>
+                    <span className="lg-badge-dot" />
+                    {statusLabel(req.status)}
+                  </span>
+                </td>
+                <td>
+                  <div className="lg-actions">
+                    <button
+                      className="lg-approve-btn"
+                      disabled={cancellingId === req.workerDocPath}
+                      onClick={() => onApprove(req)}
+                      title="Approve cancellation"
+                    >
+                      {cancellingId === req.workerDocPath ? "…" : "Approve"}
+                    </button>
+                    <button
+                      className="lg-reject-btn"
+                      disabled={cancellingId === req.workerDocPath}
+                      onClick={() => onReject(req)}
+                      title="Reject cancellation"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div className="lg-pagination">
+        <div className="lg-page-controls">
+          <button className="lg-page-btn" onClick={() => setWcPage(1)} disabled={wcPage === 1} title="First">«</button>
+          <button className="lg-page-btn" onClick={() => setWcPage((p) => p - 1)} disabled={wcPage === 1} title="Prev">‹</button>
+          {Array.from({ length: wcTotalPages }, (_, i) => i + 1)
+            .filter((p) => p === 1 || p === wcTotalPages || Math.abs(p - wcPage) <= 1)
+            .reduce<(number | string)[]>((acc, p, i, arr) => {
+              if (i > 0 && (p as number) - (arr[i - 1] as number) > 1) acc.push("…");
+              acc.push(p);
+              return acc;
+            }, [])
+            .map((p, i) =>
+              typeof p === "string"
+                ? <span key={`e-${i}`} className="lg-page-ellipsis">…</span>
+                : <button
+                    key={p}
+                    className={`lg-page-btn${wcPage === p ? " lg-page-btn--active" : ""}`}
+                    onClick={() => setWcPage(p as number)}
+                  >{p}</button>
+            )}
+          <button className="lg-page-btn" onClick={() => setWcPage((p) => p + 1)} disabled={wcPage === wcTotalPages} title="Next">›</button>
+          <button className="lg-page-btn" onClick={() => setWcPage(wcTotalPages)} disabled={wcPage === wcTotalPages} title="Last">»</button>
+        </div>
+      </div>
     </div>
   );
 }
