@@ -5,7 +5,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "firebase:use:dev": "firebase use development",
+    "firebase:use:prod": "firebase use production",
+    "deploy:dev": "firebase deploy --project development",
+    "deploy:prod": "firebase deploy --project production",
+    "env:dev": "node scripts/switch-env.js dev",
+    "env:prod": "node scripts/switch-env.js prod"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
