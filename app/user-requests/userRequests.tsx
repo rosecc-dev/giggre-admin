@@ -281,6 +281,7 @@ const UserRequests = ({ onRequestDecision }: UserRequestsProps) => {
         skillName:            trimmed,
         skillCategory:        trimmedCategory,
         prevSkillRequestedName: addToGsinItem.skillName || "",
+        mappedFromLibrary:    true,
         updatedAt:            serverTimestamp(),
       })
 

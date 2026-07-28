@@ -94,27 +94,31 @@ function StatCard({
   sub,
   icon,
   accent,
+  href,
 }: {
   label: string;
   value: number | string;
   sub?: string;
   icon: React.ReactNode;
   accent: string;
+  href?: string;
 }) {
-  return (
-    <div
-      style={{
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)",
-        padding: "18px 20px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        flex: 1,
-        minWidth: 160,
-      }}
-    >
+  const cardStyle: React.CSSProperties = {
+    background: "var(--bg-surface)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-lg)",
+    padding: "18px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    flex: 1,
+    minWidth: 160,
+    textDecoration: "none",
+    color: "inherit",
+  };
+
+  const content = (
+    <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.6px", textTransform: "uppercase", color: "var(--text-muted)" }}>
           {label}
@@ -144,8 +148,18 @@ function StatCard({
           </div>
         )}
       </div>
-    </div>
+    </>
   );
+
+  if (href) {
+    return (
+      <Link href={href} className="db-statcard" style={cardStyle}>
+        {content}
+      </Link>
+    );
+  }
+
+  return <div style={cardStyle}>{content}</div>;
 }
 
 // ─── Quick Navigate links ─────────────────────────────────────────────────────
@@ -354,6 +368,8 @@ export default function DashboardPage() {
       <style>{`
         .db-wrap { display: flex; flex-direction: column; gap: 20px; }
         .db-stats { display: flex; gap: 14px; flex-wrap: wrap; }
+        .db-statcard { cursor: pointer; transition: background 0.15s; }
+        .db-statcard:hover { background: var(--bg-elevated); }
         .db-body { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
         @media (max-width: 900px) { .db-body { grid-template-columns: 1fr; } }
 
@@ -416,6 +432,7 @@ export default function DashboardPage() {
             sub={`${onlineUsers} online right now`}
             icon={<Users size={16} />}
             accent="var(--blue)"
+            href="/users?tab=active&status=all"
           />
           <StatCard
             label="Online Now"
@@ -423,6 +440,7 @@ export default function DashboardPage() {
             sub="Active sessions"
             icon={<Zap size={16} />}
             accent="var(--green)"
+            href="/users?tab=active&status=online"
           />
           <StatCard
             label="Total Gigs"
@@ -430,14 +448,15 @@ export default function DashboardPage() {
             sub={gigsLoading ? undefined : `${availableGigs} available`}
             icon={<Briefcase size={16} />}
             accent="var(--orange)"
+            href="/live-gigs?tab=all_gigs"
           />
-          <StatCard
+          {/* <StatCard
             label="Pending Applications"
             value={gigsLoading ? "—" : gigCounts.pendingApplications}
             sub="Awaiting review"
             icon={<Clock size={16} />}
             accent="var(--amber)"
-          />
+          /> */}
         </div>
 
         {/* ── Body ────────────────────────────────────────────────────── */}

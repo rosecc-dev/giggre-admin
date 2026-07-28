@@ -9,6 +9,8 @@ import "react-leaflet-cluster/dist/assets/MarkerCluster.css";
 import "react-leaflet-cluster/dist/assets/MarkerCluster.Default.css";
 import { Timestamp } from "firebase/firestore";
 import { useCurrency } from "@/context/CurrencyContext";
+import Modal from "@/components/ui/Modal";
+import { MapPin, Calendar, Users, Tag } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -256,29 +258,58 @@ const POPUP_THEME = {
 
 // ─── Cluster Gig List Popup ───────────────────────────────────────────────────
 
-function GigListPopup({ gigs, theme }: { gigs: GigMarker[]; theme: MapTheme }) {
+function GigListPopup({ gigs, theme, onSelect }: { gigs: GigMarker[]; theme: MapTheme; onSelect: (gig: GigMarker) => void }) {
   const pt = POPUP_THEME[theme];
   const { symbol } = useCurrency();
+  const [showAll, setShowAll] = useState(false);
+  const NEEDS_TOGGLE_THRESHOLD = 4;
+  const canToggle = gigs.length > NEEDS_TOGGLE_THRESHOLD;
+
   return (
     <div style={{ fontFamily: "DM Sans, sans-serif", minWidth: 220 }}>
       <div style={{
-        fontSize: 11, fontWeight: 700, color: pt.label,
-        textTransform: "uppercase", letterSpacing: "0.06em",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
         marginBottom: 8, paddingBottom: 6,
         borderBottom: `1px solid ${pt.border}`,
       }}>
-        {gigs.length} Gig{gigs.length !== 1 ? "s" : ""} in this area
+        <span style={{
+          fontSize: 11, fontWeight: 700, color: pt.label,
+          textTransform: "uppercase", letterSpacing: "0.06em",
+        }}>
+          {gigs.length} Gig{gigs.length !== 1 ? "s" : ""} in this area
+        </span>
+        {canToggle && (
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            style={{
+              fontSize: 10, fontWeight: 700, color: "#3B82F6",
+              background: "none", border: "none", cursor: "pointer",
+              padding: 0, flexShrink: 0,
+            }}
+          >
+            {showAll ? "Collapse" : "Show All"}
+          </button>
+        )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+      <div style={{
+        display: "flex", flexDirection: "column", gap: 6,
+        maxHeight: showAll ? "none" : 280,
+        overflowY: showAll ? "visible" : "auto",
+      }}>
         {gigs.map((gig) => {
           const color = GIG_COLORS[gig.gigType];
           const isAvailable = gig.status?.toLowerCase() === "available";
           return (
-            <div key={gig.id} style={{
-              padding: "7px 8px", borderRadius: 8,
-              background: pt.itemBg,
-              border: `1px solid ${pt.border}`,
-            }}>
+            <div
+              key={gig.id}
+              onClick={() => onSelect(gig)}
+              style={{
+                padding: "7px 8px", borderRadius: 8,
+                background: pt.itemBg,
+                border: `1px solid ${pt.border}`,
+                cursor: "pointer",
+              }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0 }} />
                 <span style={{ fontSize: 13, fontWeight: 700, color: pt.title, lineHeight: 1.2, flex: 1 }}>
@@ -309,6 +340,95 @@ function GigListPopup({ gigs, theme }: { gigs: GigMarker[]; theme: MapTheme }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ─── Gig Detail Modal ─────────────────────────────────────────────────────────
+
+function GigDetailModal({ gig, onClose }: { gig: GigMarker; onClose: () => void }) {
+  const { symbol } = useCurrency();
+  const color = GIG_COLORS[gig.gigType];
+  const isAvailable = gig.status?.toLowerCase() === "available";
+
+  return (
+    <Modal open onClose={onClose} title="Gig Details" size="md">
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)" }}>
+          {gig.title || "Untitled Gig"}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 5,
+            padding: "2px 8px", borderRadius: 20,
+            background: `${color}22`, color,
+            fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em",
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, display: "inline-block" }} />
+            {GIG_LABELS[gig.gigType]} Gig
+          </span>
+          {gig.category && (
+            <span style={{
+              padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700,
+              background: "var(--bg-elevated)", color: "var(--text-secondary)",
+            }}>
+              {gig.category}
+            </span>
+          )}
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 5,
+            padding: "2px 8px", borderRadius: 20,
+            background: isAvailable ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
+            color: isAvailable ? "#10B981" : "#EF4444",
+            fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em",
+          }}>
+            {gig.status || "Unknown"}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {gig.postedBy && (
+          <DetailField label="Posted by" value={gig.postedBy} />
+        )}
+        {gig.salary !== undefined && gig.salary !== null && gig.salary !== "" && (
+          <DetailField label="Salary" value={`${symbol}${gig.salary}`} />
+        )}
+        {gig.vacancy !== undefined && (
+          <DetailField label="Vacancies" value={String(gig.vacancy)} icon={<Users size={11} />} />
+        )}
+        {gig.createdAt && (
+          <DetailField
+            label="Posted"
+            value={gig.createdAt.toDate().toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            icon={<Calendar size={11} />}
+          />
+        )}
+        <DetailField
+          label="Coordinates"
+          value={`${gig.lat.toFixed(5)}, ${gig.lng.toFixed(5)}`}
+          icon={<MapPin size={11} />}
+        />
+        <DetailField label="Gig ID" value={gig.id} icon={<Tag size={11} />} mono />
+      </div>
+    </Modal>
+  );
+}
+
+function DetailField({ label, value, icon, mono }: { label: string; value: string; icon?: React.ReactNode; mono?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+        {label}
+      </span>
+      <span style={{
+        fontSize: 13, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 4,
+        fontFamily: mono ? "'Space Mono', monospace" : undefined,
+        wordBreak: mono ? "break-all" : undefined,
+      }}>
+        {icon}
+        {value}
+      </span>
     </div>
   );
 }
@@ -354,6 +474,7 @@ export default function MapView({
   const memoUsers = useMemo(() => userMarkers, [userMarkers]);
   const pt = POPUP_THEME[theme];
   const [clusterPopup, setClusterPopup] = useState<ClusterPopupState | null>(null);
+  const [selectedGig, setSelectedGig] = useState<GigMarker | null>(null);
 
   useEffect(() => { setClusterPopup(null); }, [theme]);
 
@@ -364,15 +485,10 @@ export default function MapView({
   }, [memoMarkers, memoUsers]);
 
   function handleClusterClick(e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-    const childMarkers: L.Marker[] = e.layer.getAllChildMarkers();
+    const childMarkers: (L.Marker & { __gigId?: string })[] = e.layer.getAllChildMarkers();
     const latlng: L.LatLng = e.layer.getLatLng();
     const clusterGigs = childMarkers
-      .map((m) => {
-        const pos = m.getLatLng();
-        return memoMarkers.find(
-          (g) => Math.abs(g.lat - pos.lat) < 0.00001 && Math.abs(g.lng - pos.lng) < 0.00001
-        );
-      })
+      .map((m) => memoMarkers.find((g) => g.id === m.__gigId))
       .filter(Boolean) as GigMarker[];
     setClusterPopup({ position: [latlng.lat, latlng.lng], gigs: clusterGigs });
   }
@@ -460,6 +576,9 @@ export default function MapView({
                 key={gig.id}
                 position={[gig.lat, gig.lng]}
                 icon={createGigIcon(gig.gigType)}
+                ref={(instance) => {
+                  if (instance) (instance as L.Marker & { __gigId?: string }).__gigId = gig.id;
+                }}
               >
                 <Popup>
                   <GigPopup gig={gig} theme={theme} />
@@ -517,10 +636,14 @@ export default function MapView({
             eventHandlers={{ remove: () => setClusterPopup(null) }}
             maxWidth={320}
           >
-            <GigListPopup gigs={clusterPopup.gigs} theme={theme} />
+            <GigListPopup gigs={clusterPopup.gigs} theme={theme} onSelect={setSelectedGig} />
           </Popup>
         )}
       </MapContainer>
+
+      {selectedGig && (
+        <GigDetailModal gig={selectedGig} onClose={() => setSelectedGig(null)} />
+      )}
     </>
   );
 }

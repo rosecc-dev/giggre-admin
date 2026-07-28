@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, memo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AdminLayout from "@/components/layout/AdminLayout";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -652,6 +652,7 @@ type ConfirmAction = "ban" | "unban" | "lift" | "delete" | "cancel_deletion" | n
 export default function UsersPage() {
   const { user: adminUser } = useAuthGuard({ module: "users" });
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { symbol } = useCurrency();
 
   const [users, setUsers]                   = useState<AppUser[]>([]);
@@ -684,6 +685,18 @@ export default function UsersPage() {
   const [verifiedDatesMap, setVerifiedDatesMap] = useState<Record<string, Timestamp | null>>({});
 
   const [activeTab, setActiveTab] = useState<"active" | "inactive" | "pending_deletion">("active");
+
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "active" || tabParam === "inactive" || tabParam === "pending_deletion") {
+      setActiveTab(tabParam);
+    }
+    const statusParam = searchParams.get("status") as StatusFilter | null;
+    if (statusParam) {
+      setStatusFilter(statusParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [deleteRequests, setDeleteRequests] = useState<DeleteRequest[]>([]);
   const [deleteRequestsLoading, setDeleteRequestsLoading] = useState(false);

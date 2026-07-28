@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import AdminLayout from "@/components/layout/AdminLayout";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
@@ -248,10 +249,19 @@ export default function LiveGigsPage() {
   useAuthGuard({ module: "live-gigs" });
   const { user } = useAuth();
   const { symbol } = useCurrency();
+  const searchParams = useSearchParams();
 
   const PAGE_SIZE = 20;
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("cancellation_requests");
+
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "cancellation_requests" || tabParam === "worker_cancellation_requests" || tabParam === "all_gigs") {
+      setActiveTab(tabParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [gigs, setGigs] = useState<Gig[]>([]);
   const recentlyCancelledRef = useRef<Set<string>>(new Set());
