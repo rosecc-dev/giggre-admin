@@ -10,7 +10,7 @@ import "react-leaflet-cluster/dist/assets/MarkerCluster.Default.css";
 import { Timestamp } from "firebase/firestore";
 import { useCurrency } from "@/context/CurrencyContext";
 import Modal from "@/components/ui/Modal";
-import { MapPin, Calendar, Users, Tag } from "lucide-react";
+import { MapPin, Calendar, Users, Tag, Copy, Check } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -350,6 +350,7 @@ function GigDetailModal({ gig, onClose }: { gig: GigMarker; onClose: () => void 
   const { symbol } = useCurrency();
   const color = GIG_COLORS[gig.gigType];
   const isAvailable = gig.status?.toLowerCase() === "available";
+  const displayId = gig.id.startsWith(`${gig.gigType}_`) ? gig.id.slice(gig.gigType.length + 1) : gig.id;
 
   return (
     <Modal open onClose={onClose} title="Gig Details" size="md">
@@ -409,7 +410,7 @@ function GigDetailModal({ gig, onClose }: { gig: GigMarker; onClose: () => void 
           value={`${gig.lat.toFixed(5)}, ${gig.lng.toFixed(5)}`}
           icon={<MapPin size={11} />}
         />
-        <DetailField label="Gig ID" value={gig.id} icon={<Tag size={11} />} mono />
+        <CopyableIdField label="Gig ID" value={displayId} />
       </div>
     </Modal>
   );
@@ -428,6 +429,40 @@ function DetailField({ label, value, icon, mono }: { label: string; value: strin
       }}>
         {icon}
         {value}
+      </span>
+    </div>
+  );
+}
+
+function CopyableIdField({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+        {label}
+      </span>
+      <span style={{
+        fontSize: 13, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 5,
+        fontFamily: "'Space Mono', monospace", wordBreak: "break-all",
+      }}>
+        <Tag size={11} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
+        {value}
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          title={copied ? "Copied!" : "Copy ID"}
+          style={{
+            display: "flex", alignItems: "center",
+            color: copied ? "#10B981" : "var(--text-muted)",
+            background: "none", border: "none", cursor: "pointer",
+            padding: 2, flexShrink: 0, transition: "color 0.15s",
+          }}
+        >
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+        </button>
       </span>
     </div>
   );

@@ -122,13 +122,12 @@ interface AppUser {
   deletedAt: Timestamp | null;
 }
 
-type SortField = "createdAt" | "balance" | "name" | "online";
+type SortField = "createdAt" | "name" | "online";
 type SortDir = "asc" | "desc";
 type StatusFilter = "all" | "online" | "offline" | "suspended" | "banned" | "pending_deletion" | "verified" | "unverified";
 
 const SORT_LABELS: Record<SortField, { label: string; asc: string; desc: string }> = {
   name:      { label: "Name",    asc: "A → Z",        desc: "Z → A"        },
-  balance:   { label: "Balance", asc: "Low → High",   desc: "High → Low"   },
   createdAt: { label: "Date",    asc: "Oldest first", desc: "Newest first" },
   online:    { label: "Online",   asc: "Offline first", desc: "Online first"  },
 };
@@ -144,13 +143,6 @@ function formatDate(ts: Timestamp | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatBalance(n: number, symbol: string): string {
-  return symbol + new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n ?? 0);
 }
 
 function formatLocation(loc: GeoPoint | null): string {
@@ -1313,8 +1305,6 @@ export default function UsersPage() {
         let cmp = 0;
         if (sortField === "name") {
           cmp = a.name.localeCompare(b.name);
-        } else if (sortField === "balance") {
-          cmp = a.balance - b.balance;
         } else if (sortField === "online") {
           const onlineCmp = (a.isOnline ? 1 : 0) - (b.isOnline ? 1 : 0);
           if (onlineCmp !== 0) {
@@ -1341,7 +1331,7 @@ export default function UsersPage() {
   const deletedUsers = users.filter((u) => u.isDeleted);
   const onlineCount  = activeUsers.filter((u) => u.isOnline).length;
 
-  const COL_SPAN = 8;
+  const COL_SPAN = 7;
 
   // ── Confirm dialog content ────────────────────────────────────────────────
   const confirmConfig: Record<
@@ -1642,7 +1632,7 @@ export default function UsersPage() {
                 </div>
                 <div className="up-sort-wrap">
                   <span className="up-sort-label">Sort by</span>
-                  {(["name", "balance", "createdAt", "online"] as SortField[]).map((f) => (
+                  {(["name", "createdAt", "online"] as SortField[]).map((f) => (
                     <button
                       key={f}
                       className={`up-field-btn${sortField === f ? " active" : ""}`}
@@ -1695,7 +1685,6 @@ export default function UsersPage() {
                       <th>Name</th>
                       <th>User ID</th>
                       <th>Phone</th>
-                      <th>Balance</th>
                       <th>Joined</th>
                       <th>Date Verified</th>
                       <th>Status</th>
@@ -1775,9 +1764,6 @@ export default function UsersPage() {
                                     {copiedKey === `${user.id}-phone` ? <Check size={11} /> : <Copy size={11} />}
                                   </button>
                                 </div>
-                              </td>
-                              <td style={{ fontWeight: 600, color: "var(--text-primary)" }}>
-                                {formatBalance(user.balance, symbol)}
                               </td>
                               <td>{formatDate(user.createdAt)}</td>
                               <td>{formatDate(verifiedDatesMap[user.userId] ?? null)}</td>

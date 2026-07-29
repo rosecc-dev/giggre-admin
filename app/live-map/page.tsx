@@ -44,8 +44,10 @@ interface RawUser {
   role?: string;
   isOnline?: boolean;
   isBanned?: boolean;
+  isDeleted?: boolean;
   suspended_until?: Timestamp | null;
   location?: unknown;
+  createdAt?: Timestamp | null;
 }
 
 interface GigTypeRawGig extends RawGig {
@@ -226,31 +228,36 @@ export default function LiveMapPage() {
     });
   }, [rawGigs]);
 
+  // Deleted accounts are excluded from both the map and the user list
+  const activeRawUsers = useMemo(() => rawUsers.filter((u) => !u.isDeleted), [rawUsers]);
+
   const userMarkers = useMemo<UserMarker[]>(() => {
-    return rawUsers.flatMap((u) => {
+    return activeRawUsers.flatMap((u) => {
       const m = toUserMarker(u);
       return m ? [m] : [];
     });
-  }, [rawUsers]);
+  }, [activeRawUsers]);
 
-  // All users enriched with derived fields for the list
+  // All (non-deleted) users enriched with derived fields for the list
   const enrichedUsers = useMemo(() => {
-    return rawUsers.map((u) => {
+    return activeRawUsers.map((u) => {
       const isSuspended =
         u.suspended_until != null &&
         u.suspended_until.toDate() > new Date();
       const hasLocation = extractLatLng(u.location) !== null;
       return { ...u, isSuspended, hasLocation };
     });
-  }, [rawUsers]);
+  }, [activeRawUsers]);
 
   const filteredUserList = useMemo(() => {
-    return enrichedUsers.filter((u) => {
-      if (userListFilter === "online") return u.isOnline && !u.isBanned && !u.isSuspended;
-      if (userListFilter === "offline") return !u.isOnline;
-      if (userListFilter === "no-location") return !u.hasLocation;
-      return true;
-    });
+    return enrichedUsers
+      .filter((u) => {
+        if (userListFilter === "online") return u.isOnline && !u.isBanned && !u.isSuspended;
+        if (userListFilter === "offline") return !u.isOnline;
+        if (userListFilter === "no-location") return !u.hasLocation;
+        return true;
+      })
+      .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
   }, [enrichedUsers, userListFilter]);
 
   const gigStats = useMemo(() => {
@@ -264,12 +271,12 @@ export default function LiveMapPage() {
   }, [markers, rawGigs]);
 
   const userStats = useMemo(() => {
-    const total = rawUsers.length;
+    const total = activeRawUsers.length;
     const online = enrichedUsers.filter((u) => u.isOnline && !u.isBanned && !u.isSuspended).length;
     const onMap = userMarkers.length;
     const noLocation = total - onMap;
     return { total, online, onMap, noLocation };
-  }, [rawUsers, enrichedUsers, userMarkers]);
+  }, [activeRawUsers, enrichedUsers, userMarkers]);
 
   const hasAnyMarkers = markers.length > 0 || userMarkers.length > 0;
 

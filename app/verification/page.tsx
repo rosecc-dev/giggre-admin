@@ -1868,10 +1868,10 @@ export default function VerificationPage() {
           )}
         </div>
 
-        {/* <Button variant="primary" size="sm" onClick={openCreateModal}>
+        <Button variant="primary" size="sm" onClick={openCreateModal}>
           <Plus size={14} style={{ marginRight: 6 }} />
           Create Request
-        </Button> */}
+        </Button>
       </div>
 
       {/* ── Table ─────────────────────────────────────────────────────────── */}
