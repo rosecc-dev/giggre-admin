@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import AdminLayout from "@/components/layout/AdminLayout";
@@ -245,7 +246,7 @@ function statusLabel(status: string): string {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function LiveGigsPage() {
+function LiveGigsPageInner() {
   useAuthGuard({ module: "live-gigs" });
   const { user } = useAuth();
   const { symbol } = useCurrency();
@@ -2100,6 +2101,14 @@ export default function LiveGigsPage() {
         </Modal>
       )}
     </AdminLayout>
+  );
+}
+
+export default function LiveGigsPage() {
+  return (
+    <Suspense>
+      <LiveGigsPageInner />
+    </Suspense>
   );
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, memo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AdminLayout from "@/components/layout/AdminLayout";
@@ -641,7 +642,7 @@ const PAGE_SIZE = 15;
 
 type ConfirmAction = "ban" | "unban" | "lift" | "delete" | "cancel_deletion" | null;
 
-export default function UsersPage() {
+function UsersPageInner() {
   const { user: adminUser } = useAuthGuard({ module: "users" });
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -2483,5 +2484,13 @@ export default function UsersPage() {
         </Modal>
       )}
     </AdminLayout>
+  );
+}
+
+export default function UsersPage() {
+  return (
+    <Suspense>
+      <UsersPageInner />
+    </Suspense>
   );
 }
