@@ -1,6 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
+import { adminDb, adminAuth, adminStorage } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Delete all documents the user uploaded (identity verification + skill requests)
+// ─────────────────────────────────────────────────────────────────────────────
+async function deleteUserUploadedDocuments(userId: string): Promise<number> {
+  const [verificationSnap, skillRequestsSnap] = await Promise.all([
+    adminDb.collection("verification_requests").where("userId", "==", userId).get(),
+    adminDb.collection("skill_requests").where("userId", "==", userId).get(),
+  ]);
+
+  const verificationPaths = verificationSnap.docs.flatMap((d) => {
+    const documents = d.data().documents;
+    return Array.isArray(documents)
+      ? documents.map((doc: any) => doc?.storagePath).filter((p: any) => typeof p === "string" && p)
+      : [];
+  });
+
+  const skillRequestPaths = skillRequestsSnap.docs.flatMap((d) => {
+    const proofPaths = d.data().proofPaths;
+    return Array.isArray(proofPaths)
+      ? proofPaths.filter((p: any) => typeof p === "string" && p)
+      : [];
+  });
+
+  const storagePaths = Array.from(new Set([...verificationPaths, ...skillRequestPaths]));
+  if (storagePaths.length === 0) return 0;
+
+  const bucket = adminStorage.bucket();
+  const results = await Promise.allSettled(
+    storagePaths.map((path) => bucket.file(path).delete())
+  );
+
+  let deletedCount = 0;
+  results.forEach((result, i) => {
+    if (result.status === "fulfilled" || (result.reason as any)?.code === 404) {
+      deletedCount++;
+    } else {
+      console.error(
+        `[delete-scheduled-users] failed to delete storage file "${storagePaths[i]}" for user ${userId}:`,
+        result.reason
+      );
+    }
+  });
+
+  return deletedCount;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Shared per-doc deletion logic
@@ -23,6 +69,13 @@ async function deleteRequestDoc(
     if (authErr?.code !== "auth/user-not-found") throw authErr;
   }
 
+  let deletedDocsCount = 0;
+  try {
+    deletedDocsCount = await deleteUserUploadedDocuments(userId);
+  } catch (storageErr: any) {
+    console.error(`[delete-scheduled-users] failed to delete uploaded documents for ${userId}:`, storageErr);
+  }
+
   const userSnap = await adminDb.collection("users").doc(userId).get().catch(() => null);
   const currentName: string = userSnap?.data()?.name ?? "";
   const deletedName = currentName.endsWith("(deleted)") ? currentName : `${currentName} (deleted)`;
@@ -41,7 +94,7 @@ async function deleteRequestDoc(
     notes: `Processed by ${actor.name} on ${now.toISOString()}`,
   });
 
-  return { requestId: requestDoc.id, userId, email, deletionScheduledAt: scheduledAt };
+  return { requestId: requestDoc.id, userId, email, deletionScheduledAt: scheduledAt, deletedDocsCount };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +111,7 @@ async function runSingleDeletion(
     return { deleted: [], count: 0, errors: [{ requestId, userId: "", error: "Request not found" }], ranAt: now.toISOString() };
   }
 
-  const deleted: { requestId: string; userId: string; email: string; deletionScheduledAt: string }[] = [];
+  const deleted: { requestId: string; userId: string; email: string; deletionScheduledAt: string; deletedDocsCount: number }[] = [];
   const errors: { requestId: string; userId: string; error: string }[] = [];
 
   try {
@@ -108,7 +161,7 @@ async function runBulkDeletion(actor: { id: string; name: string; email: string 
     return { deleted: [], count: 0, ranAt: now.toISOString() };
   }
 
-  const deleted: { requestId: string; userId: string; email: string; deletionScheduledAt: string }[] = [];
+  const deleted: { requestId: string; userId: string; email: string; deletionScheduledAt: string; deletedDocsCount: number }[] = [];
   const errors: { requestId: string; userId: string; error: string }[] = [];
 
   await Promise.all(
