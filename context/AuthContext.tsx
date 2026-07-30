@@ -156,6 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ...pendingData,
           id: fbUser.uid,
           isPending: false,
+          promotedFrom: pendingDoc.id,
           lastLogin: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -175,9 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // console.log("Setting promoted user:", JSON.stringify(promotedUser, null, 2));
         setUser(promotedUser);
       } catch (err) {
-        // console.error("❌ AuthContext error — full details:", err);
-        // console.error("❌ Error message:", (err as any)?.message);
-        // console.error("❌ Error code:", (err as any)?.code);
+        console.error("AuthContext: sign-in lookup failed, signing out —", err);
         await auth.signOut();
         setUser(null);
       } finally {
