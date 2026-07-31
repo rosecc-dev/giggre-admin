@@ -7,6 +7,7 @@ import Button from "@/components/ui/Button";
 import Modal, { ConfirmDialog } from "@/components/ui/Modal";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { useAuth } from "@/context/AuthContext";
+import { useLocalToggle } from "@/hooks/useLocalToggle";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -113,6 +114,7 @@ export default function UserSkillsPage() {
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<Tab>("skills");
+  const [notifFeaturesEnabled, setNotifFeaturesEnabled] = useLocalToggle("user_skills_notif_features_enabled");
 
   const [skills, setSkills]         = useState<Skill[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -528,6 +530,7 @@ export default function UserSkillsPage() {
     mappedFromLibrary?: boolean,
     prevSkillRequestedName?: string,
   ) => {
+    if (!notifFeaturesEnabled) return;
     setNotifUser({ id: userId, name: userName, email: userEmail, photoUrl: "" });
     setNotifUserSearch(userName);
     setNotifSkillName(skillName);
@@ -539,7 +542,13 @@ export default function UserSkillsPage() {
     setNotifSent(false);
     setActiveTab("send_notification");
     loadNotifUsers();
-  }, [loadNotifUsers]);
+  }, [loadNotifUsers, notifFeaturesEnabled]);
+
+  useEffect(() => {
+    if (!notifFeaturesEnabled && (activeTab === "notifications" || activeTab === "send_notification")) {
+      setActiveTab("skills");
+    }
+  }, [notifFeaturesEnabled, activeTab]);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -918,26 +927,30 @@ export default function UserSkillsPage() {
           <ClipboardList size={14} />
           Skill Requests
         </button>
-        <button
-          className={`sl-tab${activeTab === "send_notification" ? " sl-tab--active" : ""}`}
-          onClick={() => { setActiveTab("send_notification"); loadNotifUsers(); }}
-        >
-          <Send size={14} />
-          Create Notification
-        </button>
-        <button
-          className={`sl-tab${activeTab === "notifications" ? " sl-tab--active" : ""}`}
-          onClick={() => setActiveTab("notifications")}
-        >
-          <Bell size={14} />
-          Notifications
-        </button>
+        {notifFeaturesEnabled && (
+          <button
+            className={`sl-tab${activeTab === "send_notification" ? " sl-tab--active" : ""}`}
+            onClick={() => { setActiveTab("send_notification"); loadNotifUsers(); }}
+          >
+            <Send size={14} />
+            Create Notification
+          </button>
+        )}
+        {notifFeaturesEnabled && (
+          <button
+            className={`sl-tab${activeTab === "notifications" ? " sl-tab--active" : ""}`}
+            onClick={() => setActiveTab("notifications")}
+          >
+            <Bell size={14} />
+            Notifications
+          </button>
+        )}
       </div>
 
       {activeTab === "requests" && <UserRequests onRequestDecision={handleRequestDecision} />}
 
       {/* ── Notifications Log Tab ────────────────────────────────────────────── */}
-      {activeTab === "notifications" && (
+      {notifFeaturesEnabled && activeTab === "notifications" && (
         <>
           {/* Stats */}
           <div className="sl-notif-stats">
@@ -1154,7 +1167,7 @@ export default function UserSkillsPage() {
       )}
 
       {/* ── Create Notification Tab ──────────────────────────────────────────── */}
-      {activeTab === "send_notification" && (
+      {notifFeaturesEnabled && activeTab === "send_notification" && (
         <div className="sl-notif-wrap">
 
           {notifSent && (

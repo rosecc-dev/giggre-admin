@@ -1767,7 +1767,7 @@ function UsersPageInner() {
                                 </div>
                               </td>
                               <td>{formatDate(user.createdAt)}</td>
-                              <td>{formatDate(verifiedDatesMap[user.userId] ?? null)}</td>
+                              <td>{formatDate(verifiedDatesMap[user.id] ?? null)}</td>
                               <td>
                                 {statusBadge}
                               </td>

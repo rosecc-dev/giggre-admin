@@ -6,6 +6,7 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { useLocalToggle } from "@/hooks/useLocalToggle";
 import {
   collection,
   onSnapshot,
@@ -475,6 +476,7 @@ export default function VerificationPage() {
 
   // ── Page-level tab ────────────────────────────────────────────────────────
   const [activePageTab, setActivePageTab] = useState<"notifications" | "requests" | "send_notification">("requests");
+  const [notifFeaturesEnabled, setNotifFeaturesEnabled] = useLocalToggle("verification_notif_features_enabled");
 
   // ── Notifications list ────────────────────────────────────────────────────
   const [notifDocs, setNotifDocs] = useState<NotificationDoc[]>([]);
@@ -985,17 +987,19 @@ export default function VerificationPage() {
       setSelected(null);
       setActionMode(null);
       setJumpToReqUserId(approvedUser.userId);
-      setNotifUser({ id: approvedUser.userId, name: approvedUser.name, email: approvedUser.email, phone: approvedUser.phone, photoUrl: approvedUser.photoUrl });
-      setNotifUserSearch(approvedUser.name);
-      setNotifPreset("verified");
-      setNotifVerificationStatus("verified");
-      setNotifRejectReason("");
-      setNotifSent(false);
-      setActivePageTab("send_notification");
+      if (notifFeaturesEnabled) {
+        setNotifUser({ id: approvedUser.userId, name: approvedUser.name, email: approvedUser.email, phone: approvedUser.phone, photoUrl: approvedUser.photoUrl });
+        setNotifUserSearch(approvedUser.name);
+        setNotifPreset("verified");
+        setNotifVerificationStatus("verified");
+        setNotifRejectReason("");
+        setNotifSent(false);
+        setActivePageTab("send_notification");
+      }
     } finally {
       setSubmitting(false);
     }
-  }, [selected, user]);
+  }, [selected, user, notifFeaturesEnabled]);
 
   const handleReject = useCallback(async () => {
     if (!selected || !user || !rejectReason.trim()) return;
@@ -1029,17 +1033,19 @@ export default function VerificationPage() {
       setActionMode(null);
       setRejectReason("");
       setJumpToReqUserId(rejectedUser.userId);
-      setNotifUser({ id: rejectedUser.userId, name: rejectedUser.name, email: rejectedUser.email, phone: rejectedUser.phone, photoUrl: rejectedUser.photoUrl });
-      setNotifUserSearch(rejectedUser.name);
-      setNotifPreset("not_approved");
-      setNotifVerificationStatus("unverified");
-      setNotifRejectReason(reason);
-      setNotifSent(false);
-      setActivePageTab("send_notification");
+      if (notifFeaturesEnabled) {
+        setNotifUser({ id: rejectedUser.userId, name: rejectedUser.name, email: rejectedUser.email, phone: rejectedUser.phone, photoUrl: rejectedUser.photoUrl });
+        setNotifUserSearch(rejectedUser.name);
+        setNotifPreset("not_approved");
+        setNotifVerificationStatus("unverified");
+        setNotifRejectReason(reason);
+        setNotifSent(false);
+        setActivePageTab("send_notification");
+      }
     } finally {
       setSubmitting(false);
     }
-  }, [selected, user, rejectReason]);
+  }, [selected, user, rejectReason, notifFeaturesEnabled]);
 
   // ─── Stats ────────────────────────────────────────────────────────────────
 
@@ -1127,6 +1133,12 @@ export default function VerificationPage() {
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   useEffect(() => { setPage(1); }, [search, statusFilter, sortOrder, dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (!notifFeaturesEnabled && (activePageTab === "notifications" || activePageTab === "send_notification")) {
+      setActivePageTab("requests");
+    }
+  }, [notifFeaturesEnabled, activePageTab]);
 
   if (!user) return null;
 
@@ -1538,27 +1550,31 @@ export default function VerificationPage() {
           <BadgeCheck size={14} />
           Verification Requests
         </button>
-        <button
-          className={`vr-page-tab${activePageTab === "send_notification" ? " active" : ""}`}
-          onClick={openNotifTab}
-        >
-          <Send size={14} />
-          Create Notification
-        </button>
-        <button
-          className={`vr-page-tab${activePageTab === "notifications" ? " active" : ""}`}
-          onClick={() => setActivePageTab("notifications")}
-        >
-          <Bell size={14} />
-          Notifications
-          {/* {notifDocs.length > 0 && (
-            <span className="vr-badge-count" style={{ background: "var(--blue)" }}>{notifDocs.length}</span>
-          )} */}
-        </button>
+        {notifFeaturesEnabled && (
+          <button
+            className={`vr-page-tab${activePageTab === "send_notification" ? " active" : ""}`}
+            onClick={openNotifTab}
+          >
+            <Send size={14} />
+            Create Notification
+          </button>
+        )}
+        {notifFeaturesEnabled && (
+          <button
+            className={`vr-page-tab${activePageTab === "notifications" ? " active" : ""}`}
+            onClick={() => setActivePageTab("notifications")}
+          >
+            <Bell size={14} />
+            Notifications
+            {/* {notifDocs.length > 0 && (
+              <span className="vr-badge-count" style={{ background: "var(--blue)" }}>{notifDocs.length}</span>
+            )} */}
+          </button>
+        )}
       </div>
 
       {/* ── Notifications Tab ─────────────────────────────────────────────── */}
-      {activePageTab === "notifications" && (
+      {notifFeaturesEnabled && activePageTab === "notifications" && (
         <>
           {/* Stats cards */}
           <div className="vr-stats">
@@ -2432,7 +2448,7 @@ export default function VerificationPage() {
       </>)}
 
       {/* ── Create Notification Tab ────────────────────────────────────────── */}
-      {activePageTab === "send_notification" && (
+      {notifFeaturesEnabled && activePageTab === "send_notification" && (
         <div className="vr-notif-wrap">
 
           {notifSent && (
