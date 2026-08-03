@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { CurrencyProvider } from "@/context/CurrencyContext";
+import { DevModeProvider } from "@/context/DevModeContext";
 import Toaster from "@/components/ui/Toaster";
 import "./globals.css";
 
@@ -29,7 +30,9 @@ export default function RootLayout({
         {/* ThemeProvider must wrap AuthProvider so theme is available everywhere */}
         <ThemeProvider>
           <CurrencyProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <DevModeProvider>
+              <AuthProvider>{children}</AuthProvider>
+            </DevModeProvider>
           </CurrencyProvider>
           <Toaster />
         </ThemeProvider>

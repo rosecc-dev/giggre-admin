@@ -5,6 +5,7 @@ import Link from "next/link";
 import Sidebar from "@/components/sidebar/Sidebar";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import ThemeToggle from "../ui/ThemeToggle";
+import DevModeFab from "../ui/DevModeFab";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -218,6 +219,8 @@ export default function AdminLayout({
 
         <main className="admin-content">{children}</main>
       </div>
+
+      <DevModeFab />
     </div>
   );
 }

@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import Modal, { ConfirmDialog } from "@/components/ui/Modal";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { useAuth } from "@/context/AuthContext";
-import { useLocalToggle } from "@/hooks/useLocalToggle";
+import { useDevMode } from "@/context/DevModeContext";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -114,7 +114,7 @@ export default function UserSkillsPage() {
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<Tab>("skills");
-  const [notifFeaturesEnabled, setNotifFeaturesEnabled] = useLocalToggle("user_skills_notif_features_enabled");
+  const { devMode: notifFeaturesEnabled } = useDevMode();
 
   const [skills, setSkills]         = useState<Skill[]>([]);
   const [loading, setLoading]       = useState(false);

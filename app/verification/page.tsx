@@ -6,7 +6,7 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
-import { useLocalToggle } from "@/hooks/useLocalToggle";
+import { useDevMode } from "@/context/DevModeContext";
 import {
   collection,
   onSnapshot,
@@ -476,7 +476,7 @@ export default function VerificationPage() {
 
   // ── Page-level tab ────────────────────────────────────────────────────────
   const [activePageTab, setActivePageTab] = useState<"notifications" | "requests" | "send_notification">("requests");
-  const [notifFeaturesEnabled, setNotifFeaturesEnabled] = useLocalToggle("verification_notif_features_enabled");
+  const { devMode: notifFeaturesEnabled } = useDevMode();
 
   // ── Notifications list ────────────────────────────────────────────────────
   const [notifDocs, setNotifDocs] = useState<NotificationDoc[]>([]);
