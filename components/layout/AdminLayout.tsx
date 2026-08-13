@@ -6,6 +6,7 @@ import Sidebar from "@/components/sidebar/Sidebar";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import ThemeToggle from "../ui/ThemeToggle";
 import DevModeFab from "../ui/DevModeFab";
+import NotificationBell from "../ui/NotificationBell";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -154,16 +155,6 @@ export default function AdminLayout({
           background: var(--bg-hover);
           color: var(--text-primary);
         }
-        .notif-dot {
-          position: absolute;
-          top: 6px;
-          right: 6px;
-          width: 7px;
-          height: 7px;
-          background: var(--orange);
-          border-radius: 50%;
-          border: 1.5px solid var(--bg-surface);
-        }
         .topbar-avatar {
           width: 32px;
           height: 32px;
@@ -209,6 +200,7 @@ export default function AdminLayout({
 
           <div className="topbar-right">
             {actions && <div className="topbar-actions">{actions}</div>}
+            <NotificationBell />
             <ThemeToggle/>
 
             <Link href="/profile" className="topbar-avatar" title={user.displayName ?? "My Profile"}>

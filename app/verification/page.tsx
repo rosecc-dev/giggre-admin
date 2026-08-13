@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import JSZip from "jszip";
 import AdminLayout from "@/components/layout/AdminLayout";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { useAdminNotifications } from "@/hooks/useAdminNotifications";
 import { useDevMode } from "@/context/DevModeContext";
 import {
   collection,
@@ -352,7 +354,17 @@ function DocViewerModal({ doc, onClose }: { doc: VerificationDocument | null; on
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function VerificationPage() {
+  return (
+    <Suspense>
+      <VerificationPageInner />
+    </Suspense>
+  );
+}
+
+function VerificationPageInner() {
   const { user } = useAuthGuard({ module: "verification" });
+  const searchParams = useSearchParams();
+  const { notifications: adminNotifications, markAsRead: markAdminNotifRead } = useAdminNotifications();
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const [requests, setRequests] = useState<VerificationRequest[]>([]);
@@ -527,6 +539,32 @@ export default function VerificationPage() {
     });
     return () => unsub();
   }, []);
+
+  // ─── Deep link from the notification bell (?requestId=) ───────────────────
+  const openedFromNotifRef = useRef(false);
+  useEffect(() => {
+    if (openedFromNotifRef.current || loading) return;
+    const requestId = searchParams.get("requestId");
+    if (!requestId) return;
+    const found = requests.find((r) => r.id === requestId);
+    if (!found) return;
+    openedFromNotifRef.current = true;
+    setSelected(found);
+    setActionMode(null);
+    setRejectReason("");
+    setNoteText("");
+  }, [loading, requests, searchParams]);
+
+  // ─── Mark the linked admin notification as read once its request is viewed,
+  // regardless of whether the admin arrived via the bell, a deep link, or by
+  // opening the request directly from the table ───────────────────────────────
+  useEffect(() => {
+    if (!selected || !user) return;
+    const notif = adminNotifications.find(
+      (n) => n.sourceId === selected.id && !n.readBy[user.uid]
+    );
+    if (notif) markAdminNotifRead(notif.id);
+  }, [selected, adminNotifications, user, markAdminNotifRead]);
 
   // ─── Notifications listener ───────────────────────────────────────────────
 

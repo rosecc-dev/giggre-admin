@@ -3,5 +3,18 @@
     "default": "simpleproject-8ff7a",
     "development": "simpleproject-8ff7a",
     "production": "giggre-prod"
+  },
+  "targets": {},
+  "etags": {
+    "simpleproject-8ff7a": {
+      "extensionInstances": {
+        "firestore-send-email": "4ab2adfef8ac8172736a0b150ddc2e30bc3bae2dac39a76719bccf4c754c5fa2"
+      }
+    },
+    "giggre-prod": {
+      "extensionInstances": {
+        "firestore-send-email": "e66c8fdad527b72101b0f46238669b1c12f8148fc0383bf38bca48b087116c93"
+      }
+    }
   }
 }
