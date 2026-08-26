@@ -68,6 +68,7 @@ interface VisibilityConfig {
   autoCancelAfterDays: number;
   expiryWarningDays: number;
   maxGigsPerUserPerDay: number;
+  allowGigAccessForUnverified: boolean;
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -104,6 +105,7 @@ const D_VIS: VisibilityConfig = {
   autoCancelAfterDays: 7,
   expiryWarningDays: 3,
   maxGigsPerUserPerDay: 5,
+  allowGigAccessForUnverified: false,
 };
 
 // ─── UI Helpers ───────────────────────────────────────────────────────────────
@@ -386,27 +388,30 @@ export default function SettingsPage() {
 
             {/* Gig Visibility Rules */}
             <SectionCard icon={<Eye size={15} />} title="Gig Visibility Rules" accent="var(--blue)">
-              <FieldRow label="Auto-hide inactive gigs" sub="Hide gigs that haven't been updated">
+              {/* <FieldRow label="Auto-hide inactive gigs" sub="Hide gigs that haven't been updated">
                 <Toggle checked={vis.autoHideEnabled} onChange={(v) => setVis((p) => ({ ...p, autoHideEnabled: v }))} />
-              </FieldRow>
+              </FieldRow> */}
               {vis.autoHideEnabled && (
                 <FieldRow label="Hide after">
                   <NumberInput value={vis.autoHideAfterDays} onChange={(v) => setVis((p) => ({ ...p, autoHideAfterDays: v }))} min={1} suffix="days" />
                 </FieldRow>
               )}
-              <FieldRow label="Auto-cancel inactive gigs" sub="Cancel gigs with no activity">
+              {/* <FieldRow label="Auto-cancel inactive gigs" sub="Cancel gigs with no activity">
                 <Toggle checked={vis.autoCancelEnabled} onChange={(v) => setVis((p) => ({ ...p, autoCancelEnabled: v }))} />
-              </FieldRow>
+              </FieldRow> */}
               {vis.autoCancelEnabled && (
                 <FieldRow label="Cancel after">
                   <NumberInput value={vis.autoCancelAfterDays} onChange={(v) => setVis((p) => ({ ...p, autoCancelAfterDays: v }))} min={1} suffix="days" />
                 </FieldRow>
               )}
-              <FieldRow label="Expiry Warning" sub="Notify poster X days before auto-cancel">
+              {/* <FieldRow label="Expiry Warning" sub="Notify poster X days before auto-cancel">
                 <NumberInput value={vis.expiryWarningDays} onChange={(v) => setVis((p) => ({ ...p, expiryWarningDays: v }))} min={1} suffix="days" />
-              </FieldRow>
-              <FieldRow label="Max Gigs / User / Day" sub="Rate limit for gig posting" last>
+              </FieldRow> */}
+              {/* <FieldRow label="Max Gigs / User / Day" sub="Rate limit for gig posting">
                 <NumberInput value={vis.maxGigsPerUserPerDay} onChange={(v) => setVis((p) => ({ ...p, maxGigsPerUserPerDay: v }))} min={1} suffix="gigs" />
+              </FieldRow> */}
+              <FieldRow label="Allow Gig Access for Unverified Users" sub="Let unverified users view and apply to gigs" last>
+                <Toggle checked={vis.allowGigAccessForUnverified} onChange={(v) => setVis((p) => ({ ...p, allowGigAccessForUnverified: v }))} />
               </FieldRow>
               <SaveBtn onClick={() => save(DOCS.gigVisibility, vis, "Gig Visibility Rules", setSavingVis)} saving={savingVis} />
             </SectionCard>
