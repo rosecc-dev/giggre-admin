@@ -1,0 +1,482 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ───────────────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isUser(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+
+    function adminData() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuth() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        adminData().isActive == true &&
+        adminData().isPending == false;
+    }
+
+    function isSuperAdmin() {
+      return isAdmin() && adminData().role == 'super_admin';
+    }
+
+    // Gig chat rooms have a 2-uid `participants` array (support tickets use
+    // `userId` instead and are never blockable through this). True if the
+    // *other* participant has senderUid in their own blockedUsers list.
+    function isBlockedSender(roomId, senderUid) {
+      let room = get(/databases/$(database)/documents/chat_rooms/$(roomId)).data;
+      return room.keys().hasAny(['participants']) &&
+        room.participants.size() == 2 &&
+        (
+          (room.participants[0] == senderUid &&
+            senderUid in get(/databases/$(database)/documents/users/$(room.participants[1])).data.get('blockedUsers', [])) ||
+          (room.participants[1] == senderUid &&
+            senderUid in get(/databases/$(database)/documents/users/$(room.participants[0])).data.get('blockedUsers', []))
+        );
+    }
+
+//     function isApplicant() {
+//   // Worker is adding themselves to the applicants map/array
+//   // Adjust the field name to match your actual data shape
+//   return request.resource.data.diff(resource.data).affectedKeys()
+//     .hasOnly(['applicants', 'applicantIds']) &&
+//     request.auth.uid in request.resource.data.applicantIds;
+// }
+
+    // ─── Users ─────────────────────────────────────────────────
+    match /users/{uid} {
+      // Public read — allows unauthenticated referral code lookup during registration
+      allow read: if true;
+      allow write: if isAuth();
+
+      // ─── User Documents ──────────────────────────────────────
+      match /documents/{docId} {
+        allow read, write: if isUser(uid);
+      }
+
+      // ─── Saved Gigs ─────────────────────────────────────────────
+      match /savedGigs/{gigId} {
+        allow read, write: if isUser(uid);
+      }
+
+      // ─── Referrals List ──────────────────────────────────────
+      // Owner and admins can read; any authenticated user can write
+      // (needed so a new user's registration can write to the referrer's sub-collection)
+      match /referrals_list/{referredId} {
+        allow read: if isUser(uid) || isAdmin();
+        allow write: if isAuth();
+      }
+    }
+
+      match /{path=**}/referrals_list/{referredId} {
+          allow read: if isAdmin();
+        }
+
+    // ─── Worker slots — collection-group reads ─────────────────
+    // Nested `match /workers/{workerId}` blocks under quick_gigs/open_gigs/
+    // offered_gigs (below) only govern DIRECT subcollection access via a
+    // known parent doc id. They do NOT extend to collectionGroup('workers')
+    // queries spanning multiple parents (workerHasActiveGig, the worker's
+    // active-gig bar, gig history) — those need this separate recursive
+    // rule, same pattern as referrals_list above. Writes stay governed by
+    // the more specific per-parent rules, since every write goes through a
+    // known parent path.
+    match /{path=**}/workers/{workerId} {
+      allow read: if isAuth();
+    }
+
+    // ─── Admins ────────────────────────────────────────────────
+    match /admins/{uid} {
+      // Existing admins can read the whole collection (admin management
+      // page). A signed-in user may also always check their own uid-keyed
+      // doc (existent or not — needed so a brand-new admin's first lookup
+      // resolves to "not found" instead of "permission denied"), or read
+      // their own still-pending invite by email so they can find and
+      // consume it on first sign-in.
+      allow read: if isAdmin() ||
+        uid == request.auth.uid ||
+        isOwnPendingInvite();
+
+      // Admin management (inviting/editing other admins) stays
+      // super-admin-only. The one exception is a user promoting
+      // themselves into their own uid-keyed doc, which is only allowed
+      // if it exactly mirrors an existing pending invite for their email.
+      allow create: if isSuperAdmin() || isValidSelfPromotion(uid);
+      allow update: if isSuperAdmin();
+
+      // Consuming (deleting) your own pending invite after promotion is
+      // allowed; everything else stays non-deletable.
+      allow delete: if isSuperAdmin() || isOwnPendingInvite();
+    }
+
+    // ─── Skills ────────────────────────────────────────────────
+    match /skills/{skillId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ─── Skills Requests ───────────────────────────────────────
+    match /skill_requests/{docId} {
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+
+    // ─── Chat Rooms ────────────────────────────────────────────
+    match /chat_rooms/{roomId} {
+      // get: single-doc reads (support + gig chats + non-existent doc check)
+      allow get: if isAuth() && (
+        resource == null ||
+        resource.data.userId == request.auth.uid ||
+        request.auth.uid in resource.data.participants ||
+        isAdmin()
+      );
+      // list: collection queries — support uses where('userId'), gig uses arrayContains('participants')
+      allow list: if isAuth() && (
+        resource.data.userId == request.auth.uid ||
+        request.auth.uid in resource.data.participants ||
+        isAdmin()
+      );
+      allow create: if isAuth() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.auth.uid in request.resource.data.participants
+      );
+      allow update: if isAuth() && (
+        resource.data.userId == request.auth.uid ||
+        request.auth.uid in resource.data.participants ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read, update, delete: if isAuth() && (
+          get(/databases/$(database)/documents/chat_rooms/$(roomId)).data.userId == request.auth.uid
+          || request.auth.uid in get(/databases/$(database)/documents/chat_rooms/$(roomId)).data.participants
+          || isAdmin()
+        );
+        // Same participant check as above, plus: reject if the recipient has
+        // blocked the sender (client-side blocking only hides/disables the
+        // composer — this is what actually stops a blocked user's messages).
+        allow create: if isAuth() && (
+          get(/databases/$(database)/documents/chat_rooms/$(roomId)).data.userId == request.auth.uid
+          || request.auth.uid in get(/databases/$(database)/documents/chat_rooms/$(roomId)).data.participants
+        ) && !isBlockedSender(roomId, request.auth.uid);
+      }
+    }
+
+    // ─── User Reports ──────────────────────────────────────────
+    match /reports/{reportId} {
+      allow create: if isAuth() &&
+        request.resource.data.reporterId == request.auth.uid;
+      allow read: if isAuth() &&
+        (resource.data.reporterId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── Support Tickets ───────────────────────────────────────
+    match /support_tickets/{ticketId} {
+      allow read: if isAuth() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.recipientType == 'all' ||
+        (resource.data.recipientType == 'specific' &&
+          request.auth.uid in resource.data.recipients) ||
+        isAdmin()
+      );
+      allow create: if true;
+      allow update: if isAuth() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── Support Settings ──────────────────────────────────────
+    match /support_settings/{docId} {
+      allow read: if isAuth();
+      allow write: if true;
+    }
+
+    // ─── User Requests ─────────────────────────────────────────
+    match /user_requests/{requestId} {
+      allow read: if isAuth() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow create: if isAuth();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Notifications ─────────────────────────────────────────
+    match /notifications/{notifId} {
+      allow get: if isAuth() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow list: if isAuth() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      // Workers notify a gig's host when they apply — restricted to that one
+      // category, and the caller can only claim their own worker identity.
+      allow create: if isAdmin() || (
+        isAuth() &&
+        request.resource.data.category == 'new_applicant' &&
+        request.resource.data.workerId == request.auth.uid
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── App Content (public read) ─────────────────────────────
+    match /app_content/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /app_content/{docId}/items/{itemId} {
+      allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    // ─── Activity Logs ─────────────────────────────────────────
+    match /activityLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ─── Counters ──────────────────────────────────────────────
+    match /_counters/guest_support_tickets {
+      allow read, write: if true;
+    }
+
+    match /_counters/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth();
+    }
+
+    // ─── Quick Gigs ────────────────────────────────────────────
+    match /quick_gigs/{gigId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.hostId == request.auth.uid;
+      allow update: if isAuth() && (
+        resource.data.hostId == request.auth.uid ||
+        resource.data.workerId == request.auth.uid ||
+        (resource.data.assignedWorkerId == request.auth.uid && resource.data.hostId != request.auth.uid) ||
+        // Multi-worker gigs: a candidate declining/timing out writes
+        // exclusionList on the parent doc directly (quick_gig_matching_
+        // service.dart / _declineDispatch) — they're not `workerId`/
+        // `assignedWorkerId` (those stay unset for multi-worker gigs), so
+        // identify them by having their own slot doc instead.
+        exists(/databases/$(database)/documents/quick_gigs/$(gigId)/workers/$(request.auth.uid)) ||
+        isAdmin()
+      );
+      allow delete: if isAuth() && ( resource.data.hostId == request.auth.uid || isAdmin() );
+
+      // ─── Worker slots (multi-worker gigs) ────────────────────
+      // Each worker owns only their own slot doc; the gig's host owns all
+      // slots (assign/track/pay); hostId is denormalized onto every slot
+      // doc so this stays get()-free.
+      match /workers/{workerId} {
+        allow read: if isAuth();
+        allow create: if isAuth() && (
+          request.resource.data.hostId == request.auth.uid ||
+          request.auth.uid == workerId ||
+          isAdmin()
+        );
+        allow update: if isAuth() && (
+          request.auth.uid == workerId ||
+          resource.data.hostId == request.auth.uid ||
+          isAdmin()
+        );
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ─── Open Gigs ─────────────────────────────────────────────
+   match /open_gigs/{gigId} {
+    allow read: if isAuth();
+    allow create: if isAuth() &&
+      request.resource.data.hostId == request.auth.uid;
+    allow update: if isAuth() && (
+      resource.data.hostId == request.auth.uid ||
+      resource.data.workerId == request.auth.uid ||
+      resource.data.assignedWorkerId == request.auth.uid ||
+      resource.data.status == 'open' ||
+      // Multi-worker gigs keep accepting applicants (arrayUnion on
+      // `applicants`) past the first assignment, once status has moved off
+      // 'open' to 'partially_filled' — see acceptingMoreSlots in
+      // gig_detail_sheet.dart / _applyToOpenGig in gig_map_section.dart.
+      resource.data.status == 'partially_filled' ||
+      isAdmin()
+    );
+
+    allow delete: if isAuth() && (
+      resource.data.hostId == request.auth.uid || isAdmin()
+    );
+
+    // ─── Worker slots (multi-worker gigs) ──────────────────────
+    match /workers/{workerId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && (
+        request.resource.data.hostId == request.auth.uid ||
+        request.auth.uid == workerId ||
+        isAdmin()
+      );
+      allow update: if isAuth() && (
+        request.auth.uid == workerId ||
+        resource.data.hostId == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+  }
+
+    // ─── Offered Gigs ──────────────────────────────────────────
+    match /offered_gigs/{gigId} {
+      allow read: if isAuth();
+      allow create: if isAuth() &&
+        request.resource.data.hostId == request.auth.uid;
+      allow update: if isAuth() && (
+        resource.data.hostId == request.auth.uid ||
+        resource.data.workerId == request.auth.uid ||
+        resource.data.assignedWorkerId == request.auth.uid ||
+        // Multi-worker gigs: an accepting worker bumps filledSlotCount/
+        // status on the parent doc directly (_acceptOfferedGig's
+        // transaction) — identify them by having their own slot doc,
+        // since workerId/assignedWorkerId stay unset for multi-worker gigs.
+        exists(/databases/$(database)/documents/offered_gigs/$(gigId)/workers/$(request.auth.uid)) ||
+        isAdmin()
+      );
+      allow delete: if isAuth() && (
+        resource.data.hostId == request.auth.uid || isAdmin()
+      );
+
+      // ─── Worker slots (multi-worker gigs) ────────────────────
+      match /workers/{workerId} {
+        allow read: if isAuth();
+        allow create: if isAuth() && (
+          request.resource.data.hostId == request.auth.uid ||
+          request.auth.uid == workerId ||
+          isAdmin()
+        );
+        allow update: if isAuth() && (
+          request.auth.uid == workerId ||
+          resource.data.hostId == request.auth.uid ||
+          isAdmin()
+        );
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ─── Quick Gig Config ──────────────────────────────────────
+    match /quick_gig_config/{docId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ─── Gig Templates ─────────────────────────────────────────
+    match /gig_templates/{templateId} {
+      allow read: if isAuth() &&
+        resource.data.hostId == request.auth.uid;
+      allow create: if isAuth() &&
+        request.resource.data.hostId == request.auth.uid;
+      allow update: if isAuth() &&
+        resource.data.hostId == request.auth.uid;
+      allow delete: if isAuth() &&
+        resource.data.hostId == request.auth.uid;
+    }
+
+    // ─── General Config ────────────────────────────────────────
+    match /general_config/maintenance {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // Read by every signed-in user at startup (CurrentUserProvider's
+    // _listenToGigVisibilityRules) to check allowGigAccessForUnverified —
+    // needs the same non-admin read access as maintenance above, or that
+    // listener hits permission-denied for every regular user.
+    match /general_config/gig_visibility_rules {
+      allow read: if isAuth();
+      allow write: if isSuperAdmin();
+    }
+
+    match /general_config/{docId} {
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
+    }
+
+    // ─── Account Delete Requests ────────────────────────────────
+    // Written by delete_acc_service.dart (create on request, update on
+    // cancel) and read back by main.dart/home_screen.dart to surface the
+    // live status on the pendingDeletion gate screen. Also written by the
+    // website's delete-account page, which tags its own docs with
+    // source: 'web' (the app's docs carry no source field at all — the
+    // field is optional so this stays backward-compatible with the app).
+    // Owner may only move their own request to 'cancelled' — everything
+    // else (approve/complete/edit) is admin-only via giggre-admin, so a
+    // user can't self-approve or forge other fields.
+    match /account_delete_requests/{requestId} {
+      allow read: if isAuth() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow create: if isAuth() &&
+        request.resource.data.userId == request.auth.uid &&
+        (!('source' in request.resource.data) || request.resource.data.source == 'web');
+      allow update: if isAdmin() || (
+        isAuth() &&
+        resource.data.userId == request.auth.uid &&
+        resource.data.status in ['pending_deletion', 'approved'] &&
+        request.resource.data.status == 'cancelled'
+      );
+      allow delete: if isAdmin();
+    }
+    
+        // ─── Admin Notifications ────────────────────────────────────
+    // Centralized, permission-aware notification center for admins.
+    // Only written by Cloud Functions (Admin SDK bypasses these rules) —
+    // clients may only read notifications matching a permission they
+    // currently hold, and may only toggle their own key in `readBy`.
+    match /admin_notifications/{notifId} {
+      allow read: if isAdmin() && (
+        isSuperAdmin() || resource.data.requiredPermission in adminData().permissions
+      );
+      allow create: if false;
+      allow update: if isAdmin() && (
+        isSuperAdmin() || resource.data.requiredPermission in adminData().permissions
+      ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']) &&
+        request.resource.data.readBy.diff(resource.data.readBy).affectedKeys().hasOnly([request.auth.uid]) &&
+        request.resource.data.readBy[request.auth.uid] == true;
+      allow delete: if false;
+    }
+
+    // ─── Mail (Firebase "Trigger Email" extension) ──────────────
+    // Written only by our Cloud Functions (Admin SDK, bypasses rules) and
+    // consumed only by the extension's own Cloud Function (same). No
+    // client ever needs to read or write this directly.
+    match /mail/{docId} {
+      allow read, write: if false;
+    }
+
+    // ─── Verification Requests ─────────────────────────────────
+    match /verification_requests/{userId} {
+      allow read, create: if request.auth != null &&
+        request.auth.uid == userId;
+      allow update: if request.auth != null &&
+        request.auth.uid == userId &&
+        request.resource.data.status in ['pending', 'cancelled'];
+      allow read, create, update: if isAdmin();
+    }
+
+  }
+}
