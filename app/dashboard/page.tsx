@@ -183,6 +183,7 @@ const QUICK_LINKS: {
   { href: "/announcements",       icon: MegaphoneIcon,   label: "Announcements",           accent: "var(--orange)",        module: "announcements" },
   { href: "/support",             icon: Headphones,      label: "Support",                 accent: "var(--teal, #0d9488)", module: "reports" },
   { href: "/content-management",  icon: File,            label: "Content Management",      accent: "var(--indigo, #6366f1)", module: "content-management" },
+  { href: "/word-filter",         icon: File,            label: "Word-Filter",             accent: "var(--indigo, #6366f1)", module: "word-filter" },
   { href: "/admins",              icon: Shield,          label: "Admins",                  accent: "var(--purple)",        module: "admins" },
   { href: "/settings",            icon: Settings,        label: "Settings",                accent: "var(--text-muted)",    module: "settings" },
 ];

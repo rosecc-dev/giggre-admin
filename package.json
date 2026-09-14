@@ -11,7 +11,8 @@
     "deploy:dev": "firebase deploy --project development",
     "deploy:prod": "firebase deploy --project production",
     "env:dev": "node scripts/switch-env.js dev",
-    "env:prod": "node scripts/switch-env.js prod"
+    "env:prod": "node scripts/switch-env.js prod",
+    "seed:word-filter": "node scripts/seedWordFilter.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

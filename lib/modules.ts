@@ -12,6 +12,7 @@ export type ModuleKey =
   | "quick-gigs"
   | "activity-logs"
   | "content-management"
+  | "word-filter"
   | "verification"
   | "referrals";
 
@@ -37,6 +38,7 @@ export const ALL_MODULES: ModuleMeta[] = [
   { key: "quick-gigs",         label: "Quick Gigs Configuration",  href: "/quick-gigs" },
   { key: "activity-logs",      label: "Activity Logs",           href: "/activity-logs" },
   { key: "content-management", label: "Content Management",      href: "/content-management" },
+   { key: "word-filter", label: "Word Filter",      href: "/word-filter" },
   { key: "verification",       label: "Verification Requests",   href: "/verification" },
   { key: "referrals",          label: "Referrals",               href: "/referrals" },
 ];

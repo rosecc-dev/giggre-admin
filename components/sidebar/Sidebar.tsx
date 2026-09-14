@@ -8,6 +8,7 @@ import {
   Map, MegaphoneIcon, File, BadgeCheck,
   ClipboardList, Zap, Wrench, Gift, Headphones,
   LucideIcon,
+  Filter,
 } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import type { AdminUser } from "@/context/AuthContext";
@@ -70,6 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Content",
     items: [
       { href: "/content-management", icon: File, label: "Content Management", module: "content-management" },
+       { href: "/word-filter", icon: Filter, label: "Word Filter", module: "word-filter" },
     ],
   },
   {

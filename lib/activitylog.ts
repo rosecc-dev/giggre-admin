@@ -55,6 +55,8 @@ export type GigLogAction =
 
 export type QuickGigLogAction = "config_updated";
 
+export type WordFilterLogAction = "word_filter_updated";
+
 export type SkillLogAction =
   | "skill_created"
   | "skill_updated"
@@ -87,6 +89,7 @@ export type LogAction =
   | UserLogAction
   | GigLogAction
   | QuickGigLogAction
+  | WordFilterLogAction
   | SkillLogAction
   | SettingsLogAction
   | UserRequestLogAction
@@ -105,7 +108,8 @@ export type LogModule =
   | "quick_gig_config"
   | "user_requests"
   | "support"
-  | "verification";
+  | "verification"
+  | "word_filter";
 
 export type ContentSectionKey =
   | "carousel_items"
@@ -209,6 +213,9 @@ export const buildDescription = {
 
   configUpdated: (section: string) =>
     `Updated Quick Gig configuration — ${section}`,
+
+  wordFilterUpdated: (termCount: number, enabled: boolean) =>
+    `Updated Word Filter — ${termCount} blocked term${termCount !== 1 ? "s" : ""}, ${enabled ? "enabled" : "disabled"}`,
 
   // ── Skills library ────────────────────────────────────────────────────────
 
