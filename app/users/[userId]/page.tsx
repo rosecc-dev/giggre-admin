@@ -15,6 +15,7 @@ import {
   getDoc,
   query,
   where,
+  documentId,
   updateDoc,
   serverTimestamp,
   Timestamp,
@@ -26,7 +27,7 @@ import {
   ArrowLeft, User, MapPin, Star, Briefcase,
   Clock, Shield, Wrench, Plus, Trash2, ChevronLeft, ChevronRight, CheckCircle,
   Copy, Check, Ban, ShieldOff, ShieldCheck, AlertTriangle, History,
-  GitBranch, BadgeCheck, ExternalLink, FileText,
+  GitBranch, BadgeCheck, ExternalLink, FileText, UserX,
 } from "lucide-react";
 import { useCurrency } from "@/context/CurrencyContext";
 
@@ -80,6 +81,8 @@ interface UserDoc {
   referredByName: string | null;
   referredByUID: string | null;
   referred_by: string | null;
+  // Blocking
+  blockedUsers: string[];
 }
 
 interface SkillEntry {
@@ -202,6 +205,7 @@ function toUserDoc(id: string, d: Record<string, any>): UserDoc {
     referredByName:    typeof (d.referrals as any)?.referredByName === "string" ? (d.referrals as any).referredByName : null,
     referredByUID:     typeof (d.referrals as any)?.referredByUID === "string" ? (d.referrals as any).referredByUID : null,
     referred_by:       typeof d.referred_by === "string" ? d.referred_by : null,
+    blockedUsers:      Array.isArray(d.blockedUsers) ? d.blockedUsers : [],
   };
 }
 
@@ -864,6 +868,11 @@ export default function UserProfilePage() {
   const [referredUsers, setReferredUsers]           = useState<{ uid: string; name: string; email: string; referral_code_used: string | null; joined_at: Timestamp | null; verified_at: Timestamp | null }[]>([]);
   const [referredUsersLoading, setReferredUsersLoading] = useState(false);
   const [referredUsersPage, setReferredUsersPage]   = useState(1);
+  const [blockedUsersList, setBlockedUsersList]     = useState<{ uid: string; name: string; email: string }[]>([]);
+  const [blockedUsersLoading, setBlockedUsersLoading] = useState(false);
+  const [blockedByList, setBlockedByList]           = useState<{ uid: string; name: string; email: string }[]>([]);
+  const [blockedByLoading, setBlockedByLoading]     = useState(false);
+  const [blockedTab, setBlockedTab]                 = useState<"blocked" | "blockedBy">("blocked");
   const [activeSkillTab, setActiveSkillTab]         = useState<"skills" | "requests" | "delete_request">("skills");
   const [selectedDoc, setSelectedDoc]               = useState<{ category: string; name: string; url: string; uploadedAt: Timestamp | null } | null>(null);
   const [userSkillRequests, setUserSkillRequests]   = useState<{
@@ -1064,6 +1073,53 @@ export default function UserProfilePage() {
       })
       .catch((err) => console.warn("[UserProfile] referrals_list error:", err))
       .finally(() => setReferredUsersLoading(false));
+  }, [userId]);
+
+  // ── Fetch users this user has blocked ─────────────────────────────────────
+  useEffect(() => {
+    const ids = userData?.blockedUsers ?? [];
+    if (ids.length === 0) { setBlockedUsersList([]); return; }
+    setBlockedUsersLoading(true);
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
+    Promise.all(
+      chunks.map((chunk) => getDocs(query(collection(db, "users"), where(documentId(), "in", chunk))))
+    )
+      .then((snaps) => {
+        const list = snaps.flatMap((snap) => snap.docs.map((d) => {
+          const data = d.data() as Record<string, any>;
+          return {
+            uid: d.id,
+            name: typeof data.name === "string" ? data.name : d.id,
+            email: typeof data.email === "string" ? data.email : "",
+          };
+        }));
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        setBlockedUsersList(list);
+      })
+      .catch((err) => console.warn("[UserProfile] blockedUsers fetch error:", err))
+      .finally(() => setBlockedUsersLoading(false));
+  }, [userData?.blockedUsers.join(",")]);
+
+  // ── Fetch users who have blocked this user ──────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    setBlockedByLoading(true);
+    getDocs(query(collection(db, "users"), where("blockedUsers", "array-contains", userId)))
+      .then((snap) => {
+        const list = snap.docs.map((d) => {
+          const data = d.data() as Record<string, any>;
+          return {
+            uid: d.id,
+            name: typeof data.name === "string" ? data.name : d.id,
+            email: typeof data.email === "string" ? data.email : "",
+          };
+        });
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        setBlockedByList(list);
+      })
+      .catch((err) => console.warn("[UserProfile] blockedBy fetch error:", err))
+      .finally(() => setBlockedByLoading(false));
   }, [userId]);
 
   // ── Fetch verification status & documents ────────────────────────────────
@@ -2018,6 +2074,76 @@ export default function UserProfilePage() {
               </>
             );
           })()}
+        </div>
+      </div>
+
+      {/* Blocked Users */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+          <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+            {(["blocked", "blockedBy"] as const).map((tab) => {
+              const label =
+                tab === "blocked"
+                  ? `Users Blocked${blockedUsersList.length > 0 ? ` (${blockedUsersList.length})` : ""}`
+                  : `Blocked By${blockedByList.length > 0 ? ` (${blockedByList.length})` : ""}`;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setBlockedTab(tab)}
+                  style={{
+                    padding: "12px 20px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    border: "none",
+                    borderBottom: `2px solid ${blockedTab === tab ? "var(--blue)" : "transparent"}`,
+                    background: "none",
+                    cursor: "pointer",
+                    color: blockedTab === tab ? "var(--blue)" : "var(--text-muted)",
+                    marginBottom: -1,
+                    transition: "color 0.15s",
+                    fontFamily: "inherit",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <UserX size={14} />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ padding: "20px 24px" }}>
+            {(() => {
+              const list = blockedTab === "blocked" ? blockedUsersList : blockedByList;
+              const isLoading = blockedTab === "blocked" ? blockedUsersLoading : blockedByLoading;
+              const emptyMsg = blockedTab === "blocked" ? "This user hasn't blocked anyone." : "No one has blocked this user.";
+              return isLoading ? (
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</div>
+              ) : list.length === 0 ? (
+                <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>{emptyMsg}</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {list.map((u) => (
+                    <div
+                      key={u.uid}
+                      onClick={() => router.push(`/users/${u.uid}`)}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 14px", cursor: "pointer" }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                          {u.name}
+                          <ExternalLink size={11} style={{ opacity: 0.4 }} />
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{u.email || "—"}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
         </div>
       </div>
 

@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, Shield,
   Settings, LogOut, ChevronLeft, ChevronRight, Activity,
   Map, MegaphoneIcon, File, BadgeCheck,
-  ClipboardList, Zap, Wrench, Gift, Headphones,
+  ClipboardList, Zap, Wrench, Gift, Headphones, Flag,
   LucideIcon,
   Filter,
 } from "lucide-react";
@@ -58,6 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/verification", icon: BadgeCheck, label: "Verification", module: "verification" },
       { href: "/user-skills",  icon: Wrench,     label: "User Skills",  module: "library-gsin" },
       { href: "/referrals",    icon: Gift,       label: "Referrals",    module: "referrals" },
+      { href: "/user-reports", icon: Flag,       label: "User Reports", module: "user-reports" },
     ],
   },
   {

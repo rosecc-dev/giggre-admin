@@ -6,6 +6,7 @@ export type ModuleKey =
   | "admins"
   | "announcements"
   | "reports"
+  | "user-reports"
   | "settings"
   | "library-gsin"
   | "user-requests"
@@ -32,6 +33,7 @@ export const ALL_MODULES: ModuleMeta[] = [
   { key: "admins",             label: "Admin Management",        href: "/admins",        superAdminOnly: true },
   { key: "announcements",      label: "Announcements",           href: "/announcements" },
   { key: "reports",            label: "Support",                 href: "/support" },
+  { key: "user-reports",       label: "User Reports",            href: "/user-reports" },
   { key: "settings",           label: "Settings",                href: "/settings" },
   { key: "library-gsin",       label: "User Skills",   href: "/user-skills" },
   { key: "user-requests",      label: "User Skill Requests",     href: "/user-requests" },
