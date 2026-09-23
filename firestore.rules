@@ -27,6 +27,37 @@ service cloud.firestore {
       return isAdmin() && adminData().role == 'super_admin';
     }
 
+    // A user checking for / consuming their own pending admin invite,
+    // before they have a uid-keyed admins/{uid} doc of their own yet.
+    function isOwnPendingInvite() {
+      return isAuth() &&
+        resource != null &&
+        resource.data.isPending == true &&
+        resource.data.email == request.auth.token.email;
+    }
+
+    // The pending invite doc a self-promotion create claims to originate
+    // from — used to verify the new admins/{uid} doc exactly mirrors an
+    // invite a super admin actually created, so a caller can't grant
+    // themselves a role/permissions beyond what was already provisioned.
+    function pendingInviteFor(id) {
+      return get(/databases/$(database)/documents/admins/$(id)).data;
+    }
+
+    function isValidSelfPromotion(uid) {
+      return isAuth() &&
+        uid == request.auth.uid &&
+        request.resource.data.isPending == false &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.promotedFrom is string &&
+        exists(/databases/$(database)/documents/admins/$(request.resource.data.promotedFrom)) &&
+        pendingInviteFor(request.resource.data.promotedFrom).isPending == true &&
+        pendingInviteFor(request.resource.data.promotedFrom).isActive == true &&
+        pendingInviteFor(request.resource.data.promotedFrom).email == request.auth.token.email &&
+        pendingInviteFor(request.resource.data.promotedFrom).role == request.resource.data.role &&
+        pendingInviteFor(request.resource.data.promotedFrom).permissions == request.resource.data.permissions;
+    }
+
     // Gig chat rooms have a 2-uid `participants` array (support tickets use
     // `userId` instead and are never blockable through this). True if the
     // *other* participant has senderUid in their own blockedUsers list.

@@ -32,10 +32,19 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
 
+# Firebase extensions manifest — the SMTP connection URI param embeds the
+# app password in plaintext, unlike the SMTP_PASSWORD secret param which
+# stores only a Secret Manager reference here.
+extensions/*.env
+extensions/*.env.*
+extensions/*.secret.*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env*
